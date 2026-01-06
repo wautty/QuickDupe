@@ -21,7 +21,9 @@ logging.basicConfig(
 log = logging.getLogger("QuickDupe")
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Button as MouseButton, Controller as MouseController
-import vgamepad as vg
+
+# vgamepad loaded lazily to avoid crash if ViGEmBus not installed
+vg = None
 
 # pynput controllers
 pynput_keyboard = KeyboardController()
@@ -49,27 +51,31 @@ def install_vigem():
     installer_path = os.path.join(base_path, "ViGEmBus_1.22.0_x64_x86_arm64.exe")
 
     if os.path.exists(installer_path):
-        print("[INSTALL] Running ViGEmBus installer...")
-        result = subprocess.run([installer_path, "/passive"], capture_output=True)
-        return result.returncode == 0
+        print("[INSTALL] Launching ViGEmBus installer...")
+        # Launch installer normally so user can see/interact with it
+        subprocess.Popen([installer_path])
+        return True
     else:
         print(f"[ERROR] Installer not found at: {installer_path}")
         return False
 
 def init_gamepad():
     """Initialize gamepad once at startup, auto-install driver if needed"""
-    global _gamepad, _vigem_warned
+    global _gamepad, _vigem_warned, vg
 
-    # Try to create gamepad - only ONE creation, no test
+    # Try to import and create gamepad
     try:
+        import vgamepad as vgamepad_module
+        vg = vgamepad_module
         _gamepad = vg.VX360Gamepad()
         _gamepad.reset()  # Clear any phantom button state
         _gamepad.update()
         print("[GAMEPAD] Virtual Xbox controller initialized")
         return True
     except Exception as e:
-        # Driver not installed - try to install it
-        print("[GAMEPAD] ViGEmBus not detected - attempting auto-install...")
+        # Driver not installed or not working
+        print(f"[GAMEPAD] ViGEmBus error: {e}")
+        print("[GAMEPAD] Attempting auto-install...")
         if install_vigem():
             print("[GAMEPAD] ViGEmBus installed! Restart app to use keydoor macro.")
         else:
