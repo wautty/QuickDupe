@@ -554,6 +554,8 @@ class QuickDupeApp:
         ttk.Checkbutton(frame, text="Auto (loop until pressed again)", variable=self.throwable_repeat_var, command=self.save_settings).pack(anchor='w', padx=10, pady=5)
 
         # Throwable Timings
+        self.create_slider(frame, "Throw hold time:", "throw_hold_time", 50, 10, 200, "ms")
+        self.create_slider(frame, "Delay before DC:", "throw_dc_delay_before", 0, 0, 200, "ms")
         self.create_slider(frame, "Wait before E:", "throw_wait_before_e", 400, 0, 2000, "ms")
         self.create_slider(frame, "Wait after E:", "throw_wait_after_e", 100, 0, 1000, "ms")
         self.create_slider(frame, "Wait after Q:", "throw_wait_after_q", 800, 0, 2000, "ms")
@@ -1050,6 +1052,8 @@ class QuickDupeApp:
         # Throwable settings
         self.config["throwable_hotkey"] = self.throwable_hotkey_var.get()
         self.config["throwable_repeat"] = self.throwable_repeat_var.get()
+        self.config["throw_hold_time"] = self.throw_hold_time_var.get()
+        self.config["throw_dc_delay_before"] = self.throw_dc_delay_before_var.get()
         self.config["throw_wait_before_e"] = self.throw_wait_before_e_var.get()
         self.config["throw_wait_after_e"] = self.throw_wait_after_e_var.get()
         self.config["throw_wait_after_q"] = self.throw_wait_after_q_var.get()
@@ -1092,6 +1096,8 @@ class QuickDupeApp:
 
     def reset_throwable_defaults(self):
         """Reset all throwable timing parameters to defaults"""
+        self.throw_hold_time_var.set(50)
+        self.throw_dc_delay_before_var.set(0)
         self.throw_wait_before_e_var.set(400)
         self.throw_wait_after_e_var.set(100)
         self.throw_wait_after_q_var.set(800)
@@ -1351,13 +1357,20 @@ class QuickDupeApp:
                 print(f"\n=== CYCLE {cycle} ===")
 
                 # ===== Initial throw =====
+                throw_hold = self.throw_hold_time_var.get() / 1000.0
+                dc_delay = self.throw_dc_delay_before_var.get() / 1000.0
+
                 time.sleep(0.005)
                 mouse_down()
-                time.sleep(0.050)
+                time.sleep(throw_hold)
                 mouse_up()
-                print(f"[{cycle}] Throw done")
+                print(f"[{cycle}] Throw done (held {int(throw_hold*1000)}ms)")
 
-                # ===== Disconnect (GHUB: Sleep20, press, Sleep50, release) =====
+                # ===== Delay before disconnect =====
+                if dc_delay > 0:
+                    time.sleep(dc_delay)
+                    print(f"[{cycle}] Waited {int(dc_delay*1000)}ms before DC")
+
                 start_packet_drop()
                 is_disconnected = True
                 print(f"[{cycle}] Disconnected")
