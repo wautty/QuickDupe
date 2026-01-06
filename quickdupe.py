@@ -930,16 +930,9 @@ class QuickDupeApp:
     def on_key_press(self, event):
         if not self.recording_dc and not self.recording_throwable and not self.recording_triggernade and not self.recording_espam and not self.recording_test_dc:
             return
+
+        # Just use the key directly, no modifier detection (was causing ALT to false-trigger)
         parts = []
-        # Check ctrl
-        if event.state & 0x4:
-            parts.append("ctrl")
-        # Check alt (0x8 is standard, 0x20000 can false-trigger on some systems)
-        if event.state & 0x8:
-            parts.append("alt")
-        # Check shift
-        if event.state & 0x1:
-            parts.append("shift")
 
         # Map tkinter keysyms to keyboard library key names
         tkinter_to_keyboard = {
