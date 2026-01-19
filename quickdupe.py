@@ -9,9 +9,91 @@ import time
 import hashlib
 import random
 import string
+import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog
 import logging
+
+# =============================================================================
+# OBFUSCATION FEATURES (opt-in: requires "obfuscate" file next to exe)
+# NOTE IF YOU SEE THIS, AND YOU TOOK THE TIME TO READ THE CODE AND
+# LEARN ABOUT THE OBFUSCATE FEATURE, PLEASE DO NOT MENTION IT IN THE CHAT
+# INSTEAD, SIMPLY UTILIZE IT IF YOU WISH, WHILE NOTING THAT IN THE WORLD
+# OF CAT AND MOUSE THAT IS EXPLOITS VS ANTICHEATS, AN ACT TO AVOID DETECTION
+# CAN BE THE CATALYST THAT CAUSES DETECTION ITSELF, SUCH IS LIFE
+# USING ANY EXPLOIT IN ANY WAY IS ALWAYS A RISK.
+#                              -LOVE, 
+#                               KILLINMESMALLS/YOUSTAYGOLD/YOUR FATHER
+# =============================================================================
+# Unique build identifier - generated fresh each build by build.py
+BUILD_ID = "__BUILD_ID_PLACEHOLDER__"
+
+def _check_obfuscation_enabled():
+    """Check if obfuscation is enabled by looking for 'obfuscate' file next to exe"""
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+    else:
+        exe_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.exists(os.path.join(exe_dir, "obfuscate"))
+
+OBFUSCATION_ENABLED = _check_obfuscation_enabled()
+
+VERSION = "1.5.0"
+
+# Generate random app name (8-18 chars) if obfuscation enabled, otherwise use default
+if OBFUSCATION_ENABLED:
+    _name_length = random.randint(8, 18)
+    _random_name = ''.join(random.choices(string.ascii_letters, k=_name_length))
+    APP_NAME = f"{_random_name} {VERSION}"
+else:
+    _random_name = "QD"
+    APP_NAME = f"QD {VERSION}"
+
+def rename_self_and_restart():
+    """Rename the running EXE to match the random app name.
+    Only runs when obfuscation is enabled and running as frozen exe."""
+    if not OBFUSCATION_ENABLED:
+        return False
+
+    # Only works for frozen exe, not script
+    if not getattr(sys, 'frozen', False):
+        return False
+
+    current_exe = sys.executable
+    current_dir = os.path.dirname(current_exe)
+    marker_file = os.path.join(current_dir, "DELETETOCHANGEID")
+
+    # If marker exists, already renamed - skip
+    if os.path.exists(marker_file):
+        return False
+
+    # Use the random name generated for APP_NAME
+    new_name = f"{_random_name}.exe"
+    new_path = os.path.join(current_dir, new_name)
+
+    try:
+        import shutil
+        # Copy to new name
+        shutil.copy2(current_exe, new_path)
+
+        # Create marker file so it won't rename again
+        with open(marker_file, 'w') as f:
+            f.write(new_name)
+
+        # Launch the new exe
+        subprocess.Popen([new_path] + sys.argv[1:])
+
+        print(f"[OBFUS] Created: {new_name}")
+        print(f"[OBFUS] Delete 'DELETETOCHANGEID' to generate new name.")
+
+        # Exit this instance
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"[OBFUS] Rename failed: {e}")
+        return False
+
+    return True
 
 # Setup logging to file
 LOG_FILE = os.path.join(os.environ.get('APPDATA', '.'), "QuickDupe", "debug.log")
@@ -25,62 +107,9 @@ log = logging.getLogger("QuickDupe")
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Button as MouseButton, Controller as MouseController
 
-# vgamepad loaded lazily to avoid crash if ViGEmBus not installed
-vg = None
-
 # pynput controllers
 pynput_keyboard = KeyboardController()
 pynput_mouse = MouseController()
-
-# Virtual Xbox controller - initialize once at startup
-_gamepad = None
-_vigem_warned = False
-
-def install_vigem():
-    """Run the bundled ViGEmBus installer"""
-    if getattr(sys, 'frozen', False):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    installer_path = os.path.join(base_path, "ViGEmBus_1.22.0_x64_x86_arm64.exe")
-
-    if os.path.exists(installer_path):
-        print("[INSTALL] Launching ViGEmBus installer...")
-        # Launch installer normally so user can see/interact with it
-        subprocess.Popen([installer_path])
-        return True
-    else:
-        print(f"[ERROR] Installer not found at: {installer_path}")
-        return False
-
-def init_gamepad():
-    """Initialize gamepad once at startup, auto-install driver if needed"""
-    global _gamepad, _vigem_warned, vg
-
-    # Try to import and create gamepad
-    try:
-        import vgamepad as vgamepad_module
-        vg = vgamepad_module
-        _gamepad = vg.VX360Gamepad()
-        _gamepad.reset()  # Clear any phantom button state
-        _gamepad.update()
-        print("[GAMEPAD] Virtual Xbox controller initialized")
-        return True
-    except Exception as e:
-        # Driver not installed or not working
-        print(f"[GAMEPAD] ViGEmBus error: {e}")
-        print("[GAMEPAD] Attempting auto-install...")
-        if install_vigem():
-            print("[GAMEPAD] ViGEmBus installed! Restart app to use keydoor macro.")
-        else:
-            print("[WARNING] Install ViGEmBus manually: https://github.com/nefarius/ViGEmBus/releases")
-        _vigem_warned = True
-        return False
-
-def get_gamepad():
-    """Return the pre-initialized gamepad"""
-    return _gamepad
 
 # Packet drop via WinDivert
 import pydivert
@@ -228,7 +257,7 @@ def save_config(config):
 class QuickDupeApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("QD 1.4.0")
+        self.root.title(APP_NAME)
         self.root.geometry("442x800")
         self.root.resizable(False, True)  # Allow vertical resize
         self.root.overrideredirect(True)  # Remove Windows title bar
@@ -287,14 +316,11 @@ class QuickDupeApp:
                 self.root.geometry(f"+{saved_x}+{saved_y}")
 
         # State
-        self.dc_hotkey_registered = None
         self.throwable_hotkey_registered = None
         self.triggernade_hotkey_registered = None
         self.disconnected = False
         self.throwable_running = False
         self.throwable_stop = False
-        self.keydoor_running = False
-        self.keydoor_stop = False
         self.triggernade_running = False
         self.triggernade_stop = False
         self.triggernade_m1_count = 13  # ~13 M1s before reconnect
@@ -329,7 +355,6 @@ class QuickDupeApp:
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_mine = False
@@ -416,47 +441,47 @@ class QuickDupeApp:
         # Apply to base timing, ensure minimum 1ms
         return [max(1, ms + d) for d in deltas]
 
-    def _show_vigembus_help(self):
-        """Show popup with clickable links for ViGEmBus help"""
-        import webbrowser
+    def curved_drag(self, start, end, steps=20, step_delay=5):
+        """Perform a drag from start to end with a randomized curved path"""
+        import random
+        import math
 
-        popup = tk.Toplevel(self.root)
-        popup.title("ViGEmBus Setup")
-        popup.configure(bg='#1e1e1e')
-        popup.geometry("450x380")
-        popup.resizable(False, False)
-        popup.transient(self.root)
-        popup.grab_set()
+        start_x, start_y = start
+        end_x, end_y = end
+        dx = end_x - start_x
+        dy = end_y - start_y
 
-        # Center on parent
-        popup.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (225)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (140)
-        popup.geometry(f"+{x}+{y}")
+        # Random curve offset perpendicular to the path
+        # Magnitude is 5-15% of the path length
+        path_length = math.sqrt(dx*dx + dy*dy)
+        curve_magnitude = path_length * random.uniform(0.05, 0.15)
+        # Random direction (left or right of path)
+        curve_sign = random.choice([-1, 1])
+        # Perpendicular vector (normalized)
+        if path_length > 0:
+            perp_x = -dy / path_length * curve_magnitude * curve_sign
+            perp_y = dx / path_length * curve_magnitude * curve_sign
+        else:
+            perp_x, perp_y = 0, 0
 
-        tk.Label(popup, text="ViGEmBus is preferred for consistency.",
-                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 10, 'bold')).pack(pady=(15, 10))
+        # Move mouse through curved path using quadratic bezier
+        for i in range(steps + 1):
+            t = i / steps
+            # Quadratic bezier: P = (1-t)^2 * P0 + 2(1-t)t * P1 + t^2 * P2
+            # P0 = start, P2 = end, P1 = midpoint + perpendicular offset
+            mid_x = (start_x + end_x) / 2 + perp_x
+            mid_y = (start_y + end_y) / 2 + perp_y
 
-        tk.Label(popup, text="Step 1: Install ViGEmBus driver",
-                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
-        link1 = tk.Label(popup, text="https://github.com/nefarius/ViGEmBus/releases",
-                        bg='#1e1e1e', fg='#4da6ff', cursor='hand2', font=('Segoe UI', 9, 'underline'))
-        link1.pack()
-        link1.bind('<Button-1>', lambda e: webbrowser.open("https://github.com/nefarius/ViGEmBus/releases"))
+            x = (1-t)**2 * start_x + 2*(1-t)*t * mid_x + t**2 * end_x
+            y = (1-t)**2 * start_y + 2*(1-t)*t * mid_y + t**2 * end_y
 
-        tk.Label(popup, text="\nStep 2: If still not working, also install:",
-                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
-        link2 = tk.Label(popup, text="Xbox 360 Accessories Software",
-                        bg='#1e1e1e', fg='#4da6ff', cursor='hand2', font=('Segoe UI', 9, 'underline'))
-        link2.pack()
-        link2.bind('<Button-1>', lambda e: webbrowser.open("https://community.pcgamingwiki.com/files/file/2630-xbox-360-accessories-software-v12/"))
+            # Add tiny random jitter
+            jitter = random.uniform(-2, 2)
+            x += jitter
+            y += jitter
 
-        tk.Label(popup, text="\nStep 3: If STILL not working:",
-                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
-        tk.Label(popup, text="Check the drag & drop box and record\ndrag paths for every macro you use.",
-                 bg='#1e1e1e', fg='#aaaaaa', font=('Segoe UI', 9)).pack()
-
-        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=15)
+            pynput_mouse.position = (int(x), int(y))
+            self.vsleep(step_delay)
 
     def _fix_taskbar(self):
         """Make window show in taskbar despite overrideredirect"""
@@ -557,7 +582,7 @@ class QuickDupeApp:
                 pystray.MenuItem("Exit", self._exit_from_tray)
             )
 
-            self.tray_icon = pystray.Icon("QD 1.4.0", image, "QD 1.4.0", menu)
+            self.tray_icon = pystray.Icon(APP_NAME, image, APP_NAME, menu)
             # Run in thread so it doesn't block
             import threading
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
@@ -604,6 +629,15 @@ class QuickDupeApp:
         style.map('TCheckbutton', background=[('active', self.colors['bg'])])
         style.configure('TEntry', fieldbackground=self.colors['bg_light'], foreground=self.colors['text'],
                         borderwidth=0, relief='flat', padding=2)
+        style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d',
+                        foreground='#e0e0e0', arrowcolor='#e0e0e0')
+        style.map('TCombobox', fieldbackground=[('readonly', '#2d2d2d')],
+                  selectbackground=[('readonly', '#404040')],
+                  selectforeground=[('readonly', '#e0e0e0')])
+        self.root.option_add('*TCombobox*Listbox.background', '#2d2d2d')
+        self.root.option_add('*TCombobox*Listbox.foreground', '#e0e0e0')
+        self.root.option_add('*TCombobox*Listbox.selectBackground', '#404040')
+        self.root.option_add('*TCombobox*Listbox.selectForeground', '#e0e0e0')
         style.configure('TSeparator', background=self.colors['accent'])
 
         # Scrollbar styling - use 'alt' theme element (no grip lines)
@@ -688,7 +722,7 @@ class QuickDupeApp:
             pass
 
         # Title label
-        title_label = tk.Label(title_bar, text="QD 1.4.0", bg=self.colors['bg_light'],
+        title_label = tk.Label(title_bar, text=APP_NAME, bg=self.colors['bg_light'],
                                fg=self.colors['text'], font=('Arial', 10, 'bold'))
         title_label.pack(side='left', padx=2)
 
@@ -814,18 +848,7 @@ class QuickDupeApp:
         self.variance_label.pack(side='left')
         self.timing_variance_var.trace_add('write', lambda *args: self.variance_label.config(text=f"±{self.timing_variance_var.get()}%"))
 
-        # ===== DRAG DROP FALLBACK =====
-        # Only use drag drop if: user manually enabled it, OR vigembus failed and user hasn't disabled it
-        self.use_drag_drop_var = tk.BooleanVar(value=self.config.get("use_drag_drop", False))
-        drag_drop_frame = ttk.Frame(frame)
-        drag_drop_frame.pack(anchor='w', padx=10, pady=5)
-        ttk.Checkbutton(drag_drop_frame, text="Use drag & drop (if ViGEmBus fails)", variable=self.use_drag_drop_var, command=self.on_drag_drop_manual_toggle).pack(side='left')
-        dragdrop_info = ttk.Label(drag_drop_frame, text=" (?)", foreground='#888888', cursor='hand2')
-        dragdrop_info.pack(side='left')
-        dragdrop_info.bind('<Button-1>', lambda e: self._show_vigembus_help())
-        self._add_tooltip(dragdrop_info, "Click for ViGEmBus (preferred method) info")
-
-        # Drag timing values (used for drag drop fallback)
+        # Drag timing values
         self.drag_wait_after = 300    # ms after drop before Tab close
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
@@ -898,61 +921,6 @@ class QuickDupeApp:
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
-        # ===== KEYDOOR METHOD SECTION =====
-        keydoor_header = ttk.Frame(frame)
-        keydoor_header.pack(pady=(0, 5))
-        ttk.Label(keydoor_header, text="── Keydoor Method ──", style='Header.TLabel').pack(side='left')
-        keydoor_info = ttk.Label(keydoor_header, text=" (?)", foreground='#888888', cursor='hand2')
-        keydoor_info.pack(side='left')
-        self._add_tooltip(keydoor_info, "SETUP: Use default settings and record the key's position in your inventory.\n\nTEST FIRST: Stand AWAY from keydoor, open inventory, press hotkey.\nKey should drop then get picked up instantly when inventory closes.\n\nIF ITEM DOESN'T DROP:\n- Record position again more accurately\n- Install ViGEmBus driver\n- Or enable drag & drop mode and record the drag path\n\nWHEN DOING GLITCH: Always open inventory BEFORE approaching door.")
-
-        # Keydoor Hotkey row
-        hk_frame = ttk.Frame(frame)
-        hk_frame.pack(fill='x', padx=10, pady=5)
-        ttk.Label(hk_frame, text="Hotkey:").pack(side='left')
-        self.dc_hotkey_var = tk.StringVar(value=self.config.get("dc_hotkey", ""))
-        self.dc_hotkey_entry = tk.Entry(hk_frame, textvariable=self.dc_hotkey_var, width=15, state="readonly",
-                                       bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
-        self.dc_hotkey_entry.pack(side='left', padx=5)
-        self.dc_record_btn = ttk.Button(hk_frame, text="Set", width=6, command=self.start_recording_dc)
-        self.dc_record_btn.pack(side='left', padx=5)
-
-        # Keydoor drag record (works for both Xbox X and drag drop)
-        keydoor_drag_frame = ttk.Frame(frame)
-        keydoor_drag_frame.pack(fill='x', padx=10, pady=2)
-        self.keydoor_drag_btn = ttk.Button(keydoor_drag_frame, text="Record", width=12, command=self.start_keydoor_drag_recording)
-        self.keydoor_drag_btn.pack(side='left')
-        self.keydoor_drag_var = tk.StringVar()
-        # Load keydoor drag positions
-        # Separate storage: slot position vs drag path
-        kd_slot = self.config.get("keydoor_slot_pos", [3024, 669])
-        kd_drag_start = self.config.get("keydoor_drag_start", [3024, 669])
-        kd_drag_end = self.config.get("keydoor_drag_end", [550, 1247])
-        self.keydoor_slot_pos = tuple(kd_slot)
-        self.keydoor_drag_start = tuple(kd_drag_start)
-        self.keydoor_drag_end = tuple(kd_drag_end)
-        if self.use_drag_drop_var.get():
-            self.keydoor_drag_var.set(f"({kd_drag_start[0]},{kd_drag_start[1]}) → ({kd_drag_end[0]},{kd_drag_end[1]})")
-        else:
-            self.keydoor_drag_var.set(f"Pos: ({kd_slot[0]},{kd_slot[1]})")
-        ttk.Label(keydoor_drag_frame, textvariable=self.keydoor_drag_var, font=("Consolas", 8)).pack(side='left', padx=5)
-
-        # Keydoor Timings
-        self.create_slider(frame, "X button hold:", "keydoor_x_hold", 1250, 500, 3000, "ms")
-        self.create_slider(frame, "Tab hold:", "keydoor_tab_hold", 21, 10, 200, "ms")
-        self.create_slider(frame, "Wait before E spam:", "keydoor_wait_before_e", 73, 0, 500, "ms")
-        self.create_slider(frame, "E spam count:", "keydoor_espam_count", 30, 5, 100, "")
-        self.create_slider(frame, "E press duration:", "keydoor_e_hold", 13, 5, 100, "ms")
-        self.create_slider(frame, "E spam delay:", "keydoor_e_delay", 12, 5, 100, "ms")
-
-        # Keydoor Reset + Status
-        ttk.Button(frame, text="Reset Keydoor Defaults", command=self.reset_keydoor_defaults).pack(pady=5)
-        self.dc_status_var = tk.StringVar(value="Ready")
-        self.dc_status_label = ttk.Label(frame, textvariable=self.dc_status_var, style='Dim.TLabel')
-        self.dc_status_label.pack(pady=5)
-
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
-
         # ===== THROWABLE SECTION =====
         throwable_header = ttk.Frame(frame)
         throwable_header.pack(pady=(5, 5))
@@ -1013,7 +981,7 @@ class QuickDupeApp:
         ttk.Label(trig_header, text="── Wolfpack/Triggernade Dupe ──", style='Header.TLabel').pack(side='left')
         trig_info = ttk.Label(trig_header, text=" (?)", foreground='#888888', cursor='hand2')
         trig_info.pack(side='left')
-        self._add_tooltip(trig_info, "Record position of first quick use slot (or drag path if ViGEmBus not working).\n\nMake sure inventory is full of items you're NOT duping (e.g. stacks of 1 ammo).\nFill safe pockets as well.\n\nQuick use slots must be empty EXCEPT item you're duping in first slot.\nEven utility slots must be empty.\n\nThen press Q to bring out wolfpack/triggernade/leaper pulse unit/other grenade and hit hotkey.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.\n\nTRIGGERNADES: Start with stack of 3 in first quick use slot - if it fails 2x it keeps going.\nTriggernades are unique: when picked up they return to the same stack.")
+        self._add_tooltip(trig_info, "Record drag path from item slot to ground.\n\nMake sure inventory is full of items you're NOT duping (e.g. stacks of 1 ammo).\nFill safe pockets as well.\n\nQuick use slots must be empty EXCEPT item you're duping in first slot.\nEven utility slots must be empty.\n\nThen press Q to bring out wolfpack/triggernade/leaper pulse unit/other grenade and hit hotkey.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.\n\nTRIGGERNADES: Start with stack of 3 in first quick use slot - if it fails 2x it keeps going.\nTriggernades are unique: when picked up they return to the same stack.")
 
         # Triggernade Hotkey row
         trig_hk = ttk.Frame(frame)
@@ -1032,18 +1000,15 @@ class QuickDupeApp:
         self.trig_drag_btn = ttk.Button(trig_drag_frame, text="Record", width=12, command=self.start_trig_drag_recording)
         self.trig_drag_btn.pack(side='left')
         self.trig_drag_var = tk.StringVar()
-        # Load triggernade drag positions
-        # Separate storage: slot position vs drag path
+        # Load triggernade positions (slot + drop to ground)
         trig_slot = self.config.get("trig_slot_pos", [3024, 669])
-        trig_drag_start = self.config.get("trig_drag_start", [3024, 669])
-        trig_drag_end = self.config.get("trig_drag_end", [550, 1247])
+        trig_drop = self.config.get("trig_drop_pos", [3024, 750])
         self.trig_slot_pos = tuple(trig_slot)
-        self.trig_drag_start = tuple(trig_drag_start)
-        self.trig_drag_end = tuple(trig_drag_end)
-        if self.use_drag_drop_var.get():
-            self.trig_drag_var.set(f"({trig_drag_start[0]},{trig_drag_start[1]}) → ({trig_drag_end[0]},{trig_drag_end[1]})")
-        else:
-            self.trig_drag_var.set(f"Pos: ({trig_slot[0]},{trig_slot[1]})")
+        self.trig_drop_pos = tuple(trig_drop)
+        # Legacy drag positions (kept for compatibility)
+        self.trig_drag_start = tuple(self.config.get("trig_drag_start", [3024, 669]))
+        self.trig_drag_end = tuple(self.config.get("trig_drag_end", [550, 1247]))
+        self.trig_drag_var.set(f"Slot:{trig_slot} Drop:{trig_drop}")
         ttk.Label(trig_drag_frame, textvariable=self.trig_drag_var, font=("Consolas", 8)).pack(side='left', padx=5)
 
         # Repeat checkbox
@@ -1096,6 +1061,7 @@ class QuickDupeApp:
         self.trig_m1_hold_var.trace_add('write', on_cook_var_change)
         ttk.Label(cook_frame, text="ms").pack(side='left')
         self.create_slider(frame, "M2 hold time:", "trig_m2_hold", 51, 10, 500, "ms")
+        self.create_slider(frame, "Drag speed:", "trig_drag_speed", 8, 3, 20, "ms/step")
         self.create_slider(frame, "Delay before DC:", "trig_dc_delay", 10, 0, 200, "ms")
         self.create_slider(frame, "M1s while DC'd:", "trig_dc_throws", 10, 1, 30, "")
         self.create_slider(frame, "Time between M1s:", "trig_throw_delay", 100, 10, 500, "ms")
@@ -1118,7 +1084,7 @@ class QuickDupeApp:
         ttk.Label(mine_header, text="── Mine Dupe ──", style='Header.TLabel').pack(side='left')
         mine_info = ttk.Label(mine_header, text=" (?)", foreground='#888888', cursor='hand2')
         mine_info.pack(side='left')
-        self._add_tooltip(mine_info, "Record position of mine in inventory (or drag path if ViGEmBus not working).\nIf using SURVIVOR AUGMENT: record position of UTILITY SLOT or it won't work.\n\nCOOK TIME: The use circle should be ALMOST full when inventory opens.\n- If mine deploys before/while opening inventory: reduce cook time\n- Make small adjustments until circle is mostly full on open\n\nDELAY BEFORE DC: Make very light adjustments if still not working.\n\nRECONNECT TO CLICK: If mine drops from inventory but duplicate doesn't place,\nadjust this timing in small increments either direction. Watch for consistency.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.")
+        self._add_tooltip(mine_info, "Record drag path from mine slot to ground.\nIf using SURVIVOR AUGMENT: record drag from UTILITY SLOT or it won't work.\n\nCOOK TIME: The use circle should be ALMOST full when inventory opens.\n- If mine deploys before/while opening inventory: reduce cook time\n- Make small adjustments until circle is mostly full on open\n\nDELAY BEFORE DC: Make very light adjustments if still not working.\n\nRECONNECT TO CLICK: If mine drops from inventory but duplicate doesn't place,\nadjust this timing in small increments either direction. Watch for consistency.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.")
 
         # Mine Hotkey row
         mine_hk = ttk.Frame(frame)
@@ -1140,17 +1106,15 @@ class QuickDupeApp:
         self.mine_drag_btn = ttk.Button(mine_drag_frame, text="Record", width=12, command=self.start_mine_drag_recording)
         self.mine_drag_btn.pack(side='left')
         self.mine_drag_var = tk.StringVar()
-        # Separate storage: slot position vs drag path
+        # Load mine positions (slot + drop to ground)
         mine_slot = self.config.get("mine_slot_pos", [2966, 1196])
-        mine_drag_start = self.config.get("mine_drag_start", [2966, 1196])
-        mine_drag_end = self.config.get("mine_drag_end", [1035, 1291])
+        mine_drop = self.config.get("mine_drop_pos", [2966, 1280])
         self.mine_slot_pos = tuple(mine_slot)
-        self.mine_drag_start = tuple(mine_drag_start)
-        self.mine_drag_end = tuple(mine_drag_end)
-        if self.use_drag_drop_var.get():
-            self.mine_drag_var.set(f"({mine_drag_start[0]},{mine_drag_start[1]}) → ({mine_drag_end[0]},{mine_drag_end[1]})")
-        else:
-            self.mine_drag_var.set(f"Pos: ({mine_slot[0]},{mine_slot[1]})")
+        self.mine_drop_pos = tuple(mine_drop)
+        # Legacy drag positions (kept for compatibility)
+        self.mine_drag_start = tuple(self.config.get("mine_drag_start", [2966, 1196]))
+        self.mine_drag_end = tuple(self.config.get("mine_drag_end", [1035, 1291]))
+        self.mine_drag_var.set(f"Slot:{mine_slot} Drop:{mine_drop}")
         ttk.Label(mine_drag_frame, textvariable=self.mine_drag_var, font=("Consolas", 8)).pack(side='left', padx=10)
 
         # Mine Timings
@@ -1197,7 +1161,7 @@ class QuickDupeApp:
         ttk.Label(mine_cook_frame, text="ms").pack(side='left')
 
         self.create_slider(frame, "Delay before DC:", "mine_dc_delay", 50, 0, 500, "ms", bold=True)
-        self.create_slider(frame, "X hold (drop):", "mine_x_hold", 817, 100, 1500, "ms")
+        self.create_slider(frame, "Drag speed:", "mine_drag_speed", 8, 3, 20, "ms/step")
         self.create_slider(frame, "Pre-close delay:", "mine_pre_close", 100, 0, 500, "ms")
         self.create_slider(frame, "TAB hold (close):", "mine_tab_hold", 70, 20, 300, "ms")
         self.create_slider(frame, "Close to reconnect:", "mine_close_reconnect", 940, 100, 2000, "ms", bold=True)
@@ -1205,6 +1169,30 @@ class QuickDupeApp:
         self.create_slider(frame, "Dupe click hold:", "mine_pickup_hold", 1800, 100, 3000, "ms", bold=True)
         self.create_slider(frame, "Delay before E:", "mine_e_delay", 80, 0, 1000, "ms")
         self.create_slider(frame, "Delay before loop:", "mine_loop_delay", 800, 0, 2000, "ms")
+
+        # Reselect option (hold Q + press key)
+        reselect_frame = ttk.Frame(frame)
+        reselect_frame.pack(fill='x', padx=10, pady=5)
+        self.mine_reselect_var = tk.BooleanVar(value=self.config.get("mine_reselect", False))
+        ttk.Checkbutton(reselect_frame, text="Hold Q + press", variable=self.mine_reselect_var, command=self.save_settings).pack(side='left')
+        self.mine_reselect_key_var = tk.StringVar(value=self.config.get("mine_reselect_key", "3"))
+        reselect_combo = ttk.Combobox(reselect_frame, textvariable=self.mine_reselect_key_var, values=["3", "4", "5", "6"], width=3, state="readonly")
+        reselect_combo.pack(side='left', padx=5)
+        reselect_combo.bind("<<ComboboxSelected>>", lambda e: self.save_settings())
+        ttk.Label(reselect_frame, text="to reselect mine").pack(side='left')
+
+        # Mouse nudge option (move mouse between loops)
+        nudge_frame = ttk.Frame(frame)
+        nudge_frame.pack(fill='x', padx=10, pady=5)
+        self.mine_nudge_var = tk.BooleanVar(value=self.config.get("mine_nudge", False))
+        ttk.Checkbutton(nudge_frame, text="Nudge mouse", variable=self.mine_nudge_var, command=self.save_settings).pack(side='left')
+        self.mine_nudge_px_var = tk.IntVar(value=self.config.get("mine_nudge_px", 5))
+        nudge_entry = tk.Entry(nudge_frame, textvariable=self.mine_nudge_px_var, width=5, justify='center',
+                               bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0')
+        nudge_entry.pack(side='left', padx=5)
+        nudge_entry.bind('<Return>', lambda e: self.save_settings())
+        nudge_entry.bind('<FocusOut>', lambda e: self.save_settings())
+        ttk.Label(nudge_frame, text="px right per loop").pack(side='left')
 
         ttk.Button(frame, text="Reset Mine Defaults", command=self.reset_mine_defaults).pack(pady=5)
         self.mine_status_var = tk.StringVar(value="Ready")
@@ -1411,8 +1399,6 @@ class QuickDupeApp:
         resize_grip.bind('<Button-1>', start_resize)
         resize_grip.bind('<B1-Motion>', do_resize)
 
-        # Set initial button text based on drag drop mode
-        self._update_record_button_text()
 
     def create_slider(self, parent, label, config_key, default, min_val, max_val, unit, bold=False, tooltip=None):
         """Create a slider row with label, slider, and editable value entry"""
@@ -1483,7 +1469,6 @@ class QuickDupeApp:
     def start_recording_mine(self):
         self._recording_previous_value = self.mine_hotkey_var.get()
         self.recording_mine = True
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -1499,94 +1484,53 @@ class QuickDupeApp:
         self.root.focus_force()
 
     def start_mine_drag_recording(self):
-        """Record mine drag path or slot position based on drag drop setting"""
-        self._mine_recording_cancelled = False
-        if self.use_drag_drop_var.get():
-            self.show_overlay("10 sec - click & drag (ESC=cancel)")
-            self._mine_drag_countdown(10, is_drag=True)
-        else:
-            self.show_overlay("10 sec - click slot (ESC=cancel)")
-            self._mine_drag_countdown(10, is_drag=False)
-
-    def _mine_drag_countdown(self, seconds_left, is_drag=True):
-        if self._mine_recording_cancelled:
-            return  # Cancelled
-        if seconds_left > 0:
-            self.show_overlay(f"Get ready... {seconds_left} (ESC=cancel)")
-            self.root.after(1000, lambda: self._mine_drag_countdown(seconds_left - 1, is_drag))
-        else:
-            self._start_mine_drag_listener(is_drag)
-
-    def _start_mine_drag_listener(self, is_drag=True):
+        """Record mine drag path - drag item to ground"""
         from pynput import mouse
 
-        if self._mine_recording_cancelled:
-            return
+        self.mine_drag_btn.config(text="Recording...")
+        self.show_overlay("DRAG item to ground", force=True)
+        self._mine_drag_started = False
+        self._mine_drag_start_time = None
 
-        listener_ref = [None]
+        def on_click(x, y, button, pressed):
+            if button != mouse.Button.left:
+                return
 
-        if is_drag:
-            self.show_overlay("DRAG NOW! (ESC=cancel)")
-            drag_start_pos = [None, None]
+            if pressed:
+                self._mine_drag_start_temp = (x, y)
+                self._mine_drag_start_time = time.time()
+                self._mine_drag_started = True
+                self.root.after(0, lambda: self.show_overlay("Now RELEASE...", force=True))
+            elif self._mine_drag_started:
+                # Validate drag: >20ms hold and >50px distance
+                duration_ms = (time.time() - self._mine_drag_start_time) * 1000
+                dx = x - self._mine_drag_start_temp[0]
+                dy = y - self._mine_drag_start_temp[1]
+                distance = (dx*dx + dy*dy) ** 0.5
 
-            def on_click(x, y, button, pressed):
-                if self._mine_recording_cancelled:
-                    return False  # Stop listener
-                if button != mouse.Button.left:
+                if duration_ms < 20 or distance < 50:
+                    # Not a valid drag, reset
+                    self._mine_drag_started = False
+                    self.root.after(0, lambda: self.show_overlay("DRAG item to ground", force=True))
                     return
-                if pressed:
-                    drag_start_pos[0] = x
-                    drag_start_pos[1] = y
-                    self.show_overlay(f"Start: ({x},{y}) - Release to set end...")
-                else:
-                    if drag_start_pos[0] is not None:
-                        start = (drag_start_pos[0], drag_start_pos[1])
-                        end = (x, y)
-                        self.mine_drag_start = start
-                        self.mine_drag_end = end
-                        self.config["mine_drag_start"] = list(start)
-                        self.config["mine_drag_end"] = list(end)
-                        self.mine_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
-                        save_config(self.config)
-                        self.show_overlay(f"Saved! {start} → {end}")
-                        print(f"[MINE DRAG] Recorded: {start} → {end}")
-                        keyboard.unhook(esc_hook)
-                        return False
-        else:
-            self.show_overlay("CLICK SLOT NOW! (ESC=cancel)")
 
-            def on_click(x, y, button, pressed):
-                if self._mine_recording_cancelled:
-                    return False  # Stop listener
-                if button != mouse.Button.left:
-                    return
-                if pressed:
-                    self.mine_slot_pos = (x, y)
-                    self.config["mine_slot_pos"] = [x, y]
-                    self.mine_drag_var.set(f"Pos: ({x},{y})")
-                    save_config(self.config)
-                    self.show_overlay(f"Saved slot: ({x},{y})")
-                    print(f"[MINE SLOT] Recorded: ({x},{y})")
-                    keyboard.unhook(esc_hook)
-                    return False
+                self.mine_drag_start = self._mine_drag_start_temp
+                self.mine_drag_end = (x, y)
+                self.config["mine_drag_start"] = list(self.mine_drag_start)
+                self.config["mine_drag_end"] = list(self.mine_drag_end)
+                save_config(self.config)
+                self.mine_drag_var.set(f"{self.mine_drag_start} → {self.mine_drag_end}")
+                self.root.after(0, lambda: self.mine_drag_btn.config(text="Record"))
+                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
+                print(f"[MINE] Drag: {self.mine_drag_start} → {self.mine_drag_end}")
+                return False  # Stop listener
 
-        listener_ref[0] = mouse.Listener(on_click=on_click)
-        listener_ref[0].start()
-
-        # ESC to cancel
-        def on_esc():
-            self._mine_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
-            self.root.after(0, lambda: self.show_overlay("Recording cancelled"))
-            keyboard.unhook(esc_hook)
-
-        esc_hook = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
+        listener = mouse.Listener(on_click=on_click)
+        listener.start()
 
     def start_recording_espam(self):
         self._recording_previous_value = self.espam_hotkey_var.get()
         self.recording_espam = True
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_mine = False
@@ -1604,7 +1548,6 @@ class QuickDupeApp:
     def start_recording_triggernade(self):
         self._recording_previous_value = self.triggernade_hotkey_var.get()
         self.recording_triggernade = True
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_espam = False
         self.recording_mine = False
@@ -1638,7 +1581,7 @@ class QuickDupeApp:
 
         if seconds_left > 0:
             self.drag_record_btn.config(text=f"{seconds_left}...")
-            self.show_overlay(f"Drag recording in {seconds_left}...")
+            self.show_overlay(f"Drag recording in {seconds_left}...", force=True)
             self.root.after(1000, lambda: self._drag_countdown(seconds_left - 1))
         else:
             # Countdown done - start listening
@@ -1650,7 +1593,7 @@ class QuickDupeApp:
 
         self.drag_record_btn.config(text="DRAG NOW")
         self.drag_label_var.set("Click and drag item!")
-        self.show_overlay("DRAG NOW!")
+        self.show_overlay("DRAG NOW!", force=True)
 
         drag_start_pos = [None, None]
 
@@ -1663,7 +1606,7 @@ class QuickDupeApp:
                 drag_start_pos[0] = x
                 drag_start_pos[1] = y
                 self.root.after(0, lambda: self.drag_label_var.set(f"Start: ({x},{y}) - Release..."))
-                self.root.after(0, lambda: self.show_overlay(f"Start: ({x},{y}) - Release..."))
+                self.root.after(0, lambda: self.show_overlay(f"Start: ({x},{y}) - Release...", force=True))
             else:
                 # Mouse up - record end position and stop
                 if drag_start_pos[0] is not None:
@@ -1682,7 +1625,7 @@ class QuickDupeApp:
                     save_config(self.config)
 
                     print(f"[DRAG] Recorded: {self.drag_start} → {self.drag_end}")
-                    self.root.after(0, lambda: self.show_overlay(f"Drag saved!"))
+                    self.root.after(0, lambda: self.show_overlay(f"Drag saved!", force=True))
 
                     self.recording_drag = False
                     return False  # Stop listener
@@ -1698,7 +1641,7 @@ class QuickDupeApp:
         if self._drag_recording_cancelled:
             return
 
-        self.show_overlay("Click & drag NOW! (ESC=cancel)")
+        self.show_overlay("Click & drag NOW!", force=True)
 
         state = {'start_pos': None}
         listener_ref = [None]
@@ -1715,29 +1658,21 @@ class QuickDupeApp:
 
             if pressed:
                 state['start_pos'] = (x, y)
-                self.show_overlay(f"Dragging from ({x},{y})...")
+                self.show_overlay(f"Dragging from ({x},{y})...", force=True)
             else:
                 if state['start_pos']:
                     start = state['start_pos']
                     end = (x, y)
 
-                    if target == 'keydoor':
-                        self.keydoor_drag_start = start
-                        self.keydoor_drag_end = end
-                        self.config["keydoor_drag_start"] = list(start)
-                        self.config["keydoor_drag_end"] = list(end)
-                        self.keydoor_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
-                        print(f"[KEYDOOR DRAG] Recorded: {start} → {end}")
-                    else:
-                        self.trig_drag_start = start
-                        self.trig_drag_end = end
-                        self.config["trig_drag_start"] = list(start)
-                        self.config["trig_drag_end"] = list(end)
-                        self.trig_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
-                        print(f"[TRIG DRAG] Recorded: {start} → {end}")
+                    self.trig_drag_start = start
+                    self.trig_drag_end = end
+                    self.config["trig_drag_start"] = list(start)
+                    self.config["trig_drag_end"] = list(end)
+                    self.trig_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
+                    print(f"[TRIG DRAG] Recorded: {start} → {end}")
 
                     save_config(self.config)
-                    self.show_overlay(f"Saved! {start} → {end}")
+                    self.show_overlay(f"Saved! {start} → {end}", force=True)
                     keyboard.unhook(esc_hook)
                     return False  # Stop listener
 
@@ -1749,36 +1684,61 @@ class QuickDupeApp:
             self._drag_recording_cancelled = True
             if listener_ref[0]:
                 listener_ref[0].stop()
-            self.root.after(0, lambda: self.show_overlay("Recording cancelled"))
+            self.root.after(0, lambda: self.show_overlay("Recording cancelled", force=True))
             keyboard.unhook(esc_hook)
 
         esc_hook = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
 
-    def start_keydoor_drag_recording(self):
-        """Record keydoor position or drag path depending on mode"""
-        self._drag_recording_cancelled = False
-        if self.use_drag_drop_var.get():
-            self.show_overlay("10 sec - click & drag (ESC=cancel)")
-            self._drag_countdown(10, 'keydoor', record_drag=True)
-        else:
-            self.show_overlay("10 sec - click position (ESC=cancel)")
-            self._drag_countdown(10, 'keydoor', record_drag=False)
-
     def start_trig_drag_recording(self):
-        """Record triggernade position or drag path depending on mode"""
-        self._drag_recording_cancelled = False
-        if self.use_drag_drop_var.get():
-            self.show_overlay("10 sec - click & drag (ESC=cancel)")
-            self._drag_countdown(10, 'triggernade', record_drag=True)
-        else:
-            self.show_overlay("10 sec - click position (ESC=cancel)")
-            self._drag_countdown(10, 'triggernade', record_drag=False)
+        """Record triggernade drag path - drag item to ground"""
+        from pynput import mouse
+
+        self.trig_drag_btn.config(text="Recording...")
+        self.show_overlay("DRAG item to ground", force=True)
+        self._trig_drag_started = False
+        self._trig_drag_start_time = None
+
+        def on_click(x, y, button, pressed):
+            if button != mouse.Button.left:
+                return
+
+            if pressed:
+                self._trig_drag_start_temp = (x, y)
+                self._trig_drag_start_time = time.time()
+                self._trig_drag_started = True
+                self.root.after(0, lambda: self.show_overlay("Now RELEASE...", force=True))
+            elif self._trig_drag_started:
+                # Validate drag: >20ms hold and >50px distance
+                duration_ms = (time.time() - self._trig_drag_start_time) * 1000
+                dx = x - self._trig_drag_start_temp[0]
+                dy = y - self._trig_drag_start_temp[1]
+                distance = (dx*dx + dy*dy) ** 0.5
+
+                if duration_ms < 20 or distance < 50:
+                    # Not a valid drag, reset
+                    self._trig_drag_started = False
+                    self.root.after(0, lambda: self.show_overlay("DRAG item to ground", force=True))
+                    return
+
+                self.trig_drag_start = self._trig_drag_start_temp
+                self.trig_drag_end = (x, y)
+                self.config["trig_drag_start"] = list(self.trig_drag_start)
+                self.config["trig_drag_end"] = list(self.trig_drag_end)
+                save_config(self.config)
+                self.trig_drag_var.set(f"{self.trig_drag_start} → {self.trig_drag_end}")
+                self.root.after(0, lambda: self.trig_drag_btn.config(text="Record"))
+                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
+                print(f"[TRIG] Drag: {self.trig_drag_start} → {self.trig_drag_end}")
+                return False  # Stop listener
+
+        listener = mouse.Listener(on_click=on_click)
+        listener.start()
 
     def _drag_countdown(self, seconds_left, target, record_drag=True):
         if self._drag_recording_cancelled:
             return  # Cancelled
         if seconds_left > 0:
-            self.show_overlay(f"Get ready... {seconds_left} (ESC=cancel)")
+            self.show_overlay(f"Get ready... {seconds_left}", force=True)
             self.root.after(1000, lambda: self._drag_countdown(seconds_left - 1, target, record_drag))
         else:
             if record_drag:
@@ -1787,13 +1747,13 @@ class QuickDupeApp:
                 self._start_position_listener(target)
 
     def _start_position_listener(self, target):
-        """Listen for single click to record position (for ViGEmBus mode)"""
+        """Listen for single click to record position"""
         from pynput import mouse
 
         if self._drag_recording_cancelled:
             return
 
-        self.show_overlay("Click position NOW! (ESC=cancel)")
+        self.show_overlay("Click position NOW!", force=True)
 
         listener_ref = [None]
 
@@ -1807,21 +1767,14 @@ class QuickDupeApp:
                 x, y = int(x), int(y)
                 pos = (x, y)
 
-                if target == 'keydoor':
-                    self.keydoor_slot_pos = pos
-                    self.config["keydoor_slot_pos"] = list(pos)
-                    self.keydoor_drag_var.set(f"Pos: ({x}, {y})")
-                    print(f"[KEYDOOR POS] Recorded: {pos}")
-                else:
-                    self.trig_slot_pos = pos
-                    self.config["trig_slot_pos"] = list(pos)
-                    self.trig_drag_var.set(f"Pos: ({x}, {y})")
-                    print(f"[TRIG POS] Recorded: {pos}")
+                self.trig_slot_pos = pos
+                self.config["trig_slot_pos"] = list(pos)
+                self.trig_drag_var.set(f"Pos: ({x}, {y})")
+                print(f"[TRIG POS] Recorded: {pos}")
 
                 save_config(self.config)
                 print(f"[CONFIG] Saved to: {CONFIG_FILE}")
-                print(f"[CONFIG] keydoor_slot_pos = {self.config.get('keydoor_slot_pos')}")
-                self.show_overlay(f"Position saved: ({x}, {y})")
+                self.show_overlay(f"Position saved: ({x}, {y})", force=True)
                 keyboard.unhook(esc_hook)
                 return False  # Stop listener
 
@@ -1833,7 +1786,7 @@ class QuickDupeApp:
             self._drag_recording_cancelled = True
             if listener_ref[0]:
                 listener_ref[0].stop()
-            self.root.after(0, lambda: self.show_overlay("Recording cancelled"))
+            self.root.after(0, lambda: self.show_overlay("Recording cancelled", force=True))
             keyboard.unhook(esc_hook)
 
         esc_hook = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
@@ -1846,7 +1799,7 @@ class QuickDupeApp:
     def _slot_countdown(self, seconds_left):
         if seconds_left > 0:
             self.slot_record_btn.config(text=f"{seconds_left}...")
-            self.show_overlay(f"Click slot in {seconds_left}...")
+            self.show_overlay(f"Click slot in {seconds_left}...", force=True)
             self.root.after(1000, lambda: self._slot_countdown(seconds_left - 1))
         else:
             self._start_slot_listener()
@@ -1856,7 +1809,7 @@ class QuickDupeApp:
         from pynput import mouse
 
         self.slot_record_btn.config(text="CLICK!")
-        self.show_overlay("CLICK ON SLOT!")
+        self.show_overlay("CLICK ON SLOT!", force=True)
 
         def on_click(x, y, button, pressed):
             if button == mouse.Button.left and pressed:
@@ -1868,7 +1821,7 @@ class QuickDupeApp:
 
                 self.root.after(0, lambda: self.slot_pos_var.set(f"({x}, {y})"))
                 self.root.after(0, lambda: self.slot_record_btn.config(text="Record"))
-                self.root.after(0, lambda: self.show_overlay(f"Position: ({x}, {y})"))
+                self.root.after(0, lambda: self.show_overlay(f"Position: ({x}, {y})", force=True))
                 print(f"[SLOT] Recorded drop position: ({x}, {y})")
                 return False  # Stop listener
 
@@ -1883,8 +1836,8 @@ class QuickDupeApp:
         """Start guided sequence recording for Ammo"""
         from pynput import mouse
 
-        self.um1_record_seq_btn.config(text="Recording... (ESC=cancel)")
-        self.show_overlay("Step 1: RIGHT-CLICK on item (ESC=cancel)")
+        self.um1_record_seq_btn.config(text="Recording...")
+        self.show_overlay("Step 1: RIGHT-CLICK on item", force=True)
         self._um1_record_step = 1
         self._um1_drag_started = False  # Track if drag press was captured
         self._um1_recording_cancelled = False
@@ -1899,16 +1852,16 @@ class QuickDupeApp:
                     self.um1_item_pos = (x, y)
                     self.config["um1_item_pos"] = [x, y]
                     self._um1_record_step = 2
-                    self.root.after(0, lambda: self.show_overlay("Step 2: LEFT-CLICK context menu"))
+                    self.root.after(0, lambda: self.show_overlay("Step 2: Right click on Unload", force=True))
 
             elif self._um1_record_step == 2:
-                # Step 2: Left click on context menu (only capture press, ignore release)
-                if pressed and button == mouse.Button.left:
+                # Step 2: Right click on Unload (doesn't trigger action, just records position)
+                if pressed and button == mouse.Button.right:
                     self.um1_context_pos = (x, y)
                     self.config["um1_context_pos"] = [x, y]
                     self._um1_record_step = 3
                     self._um1_drag_started = False  # Reset - need a NEW press for drag
-                    self.root.after(0, lambda: self.show_overlay("Step 3: DRAG item to slot"))
+                    self.root.after(0, lambda: self.show_overlay("Step 3: DRAG item to slot", force=True))
 
             elif self._um1_record_step == 3:
                 # Step 3: Drag - capture start on press, end on release
@@ -1918,14 +1871,14 @@ class QuickDupeApp:
                         self.um1_drag_start = (x, y)
                         self.config["um1_drag_start"] = [x, y]
                         self._um1_drag_started = True  # Mark that we got a drag press
-                        self.root.after(0, lambda: self.show_overlay("Now RELEASE to end drag"))
+                        self.root.after(0, lambda: self.show_overlay("Now RELEASE to end drag", force=True))
                     elif self._um1_drag_started:  # Only end if we captured a drag start
                         self.um1_drag_end = (x, y)
                         self.config["um1_drag_end"] = [x, y]
                         save_config(self.config)
                         self.root.after(0, self._update_um1_pos_display)
                         self.root.after(0, lambda: self.um1_record_seq_btn.config(text="Record Sequence"))
-                        self.root.after(0, lambda: self.show_overlay("Sequence recorded!"))
+                        self.root.after(0, lambda: self.show_overlay("Sequence recorded!", force=True))
                         return False  # Stop listener
 
         mouse_listener = mouse.Listener(on_click=on_click)
@@ -1936,7 +1889,7 @@ class QuickDupeApp:
             self._um1_recording_cancelled = True
             mouse_listener.stop()
             self.root.after(0, lambda: self.um1_record_seq_btn.config(text="Record Sequence"))
-            self.root.after(0, lambda: self.show_overlay("Recording cancelled"))
+            self.root.after(0, lambda: self.show_overlay("Recording cancelled", force=True))
             keyboard.unhook(esc_hook)
 
         esc_hook = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
@@ -1945,7 +1898,6 @@ class QuickDupeApp:
         """Start recording hotkey for Ammo"""
         self._recording_previous_value = self.untitled1_hotkey_var.get()
         self.recording_untitled1 = True
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -1969,8 +1921,8 @@ class QuickDupeApp:
         """Start guided sequence recording for Ghost Attachment"""
         from pynput import mouse
 
-        self.ghost_record_seq_btn.config(text="Recording... (ESC=cancel)")
-        self.show_overlay("Step 1: RIGHT-CLICK on item (ESC=cancel)")
+        self.ghost_record_seq_btn.config(text="Recording...")
+        self.show_overlay("Step 1: RIGHT-CLICK on item", force=True)
         self._ghost_record_step = 1
         self._ghost_drag_started = False
         self._ghost_recording_cancelled = False
@@ -1985,7 +1937,7 @@ class QuickDupeApp:
                     self.ghost_item_pos = (x, y)
                     self.config["ghost_item_pos"] = [x, y]
                     self._ghost_record_step = 2
-                    self.root.after(0, lambda: self.show_overlay("Step 2: Click DETACH MODS"))
+                    self.root.after(0, lambda: self.show_overlay("Step 2: Click DETACH MODS", force=True))
 
             elif self._ghost_record_step == 2:
                 # Step 2: Left click on detach mods
@@ -1994,7 +1946,7 @@ class QuickDupeApp:
                     self.config["ghost_context_pos"] = [x, y]
                     self._ghost_record_step = 3
                     self._ghost_drag_started = False
-                    self.root.after(0, lambda: self.show_overlay("Step 3: DRAG item to empty slot"))
+                    self.root.after(0, lambda: self.show_overlay("Step 3: DRAG item to empty slot", force=True))
 
             elif self._ghost_record_step == 3:
                 # Step 3: Drag - capture start on press, end on release
@@ -2003,14 +1955,14 @@ class QuickDupeApp:
                         self.ghost_drag_start = (x, y)
                         self.config["ghost_drag_start"] = [x, y]
                         self._ghost_drag_started = True
-                        self.root.after(0, lambda: self.show_overlay("Now RELEASE to end drag"))
+                        self.root.after(0, lambda: self.show_overlay("Now RELEASE to end drag", force=True))
                     elif self._ghost_drag_started:
                         self.ghost_drag_end = (x, y)
                         self.config["ghost_drag_end"] = [x, y]
                         save_config(self.config)
                         self.root.after(0, self._update_ghost_pos_display)
                         self.root.after(0, lambda: self.ghost_record_seq_btn.config(text="Record Sequence"))
-                        self.root.after(0, lambda: self.show_overlay("Sequence recorded!"))
+                        self.root.after(0, lambda: self.show_overlay("Sequence recorded!", force=True))
                         return False  # Stop listener
 
         mouse_listener = mouse.Listener(on_click=on_click)
@@ -2021,7 +1973,7 @@ class QuickDupeApp:
             self._ghost_recording_cancelled = True
             mouse_listener.stop()
             self.root.after(0, lambda: self.ghost_record_seq_btn.config(text="Record Sequence"))
-            self.root.after(0, lambda: self.show_overlay("Recording cancelled"))
+            self.root.after(0, lambda: self.show_overlay("Recording cancelled", force=True))
             keyboard.unhook(esc_hook)
 
         esc_hook = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
@@ -2033,7 +1985,6 @@ class QuickDupeApp:
         self.recording_ghost = True
         self.recording_stop = False
         self.recording_untitled1 = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2057,7 +2008,6 @@ class QuickDupeApp:
         self.recording_stop = True
         self.recording_ghost = False
         self.recording_untitled1 = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2074,27 +2024,9 @@ class QuickDupeApp:
         self.root.focus_force()
         print(f"[DEBUG] recording_stop={self.recording_stop}, bound KeyPress, focus forced")
 
-    def start_recording_dc(self):
-        self._recording_previous_value = self.dc_hotkey_var.get()
-        self.recording_dc = True
-        self.recording_throwable = False
-        self.recording_triggernade = False
-        self.recording_espam = False
-        self.recording_dc_both = False
-        self.recording_dc_outbound = False
-        self.recording_dc_inbound = False
-        self.recording_tamper = False
-        self.recording_minimize = False
-        self.recording_tray = False
-        self.dc_record_btn.config(text="...")
-        self.dc_hotkey_var.set("Press key...")
-        self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-
     def start_recording_throwable(self):
         self._recording_previous_value = self.throwable_hotkey_var.get()
         self.recording_throwable = True
-        self.recording_dc = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_dc_both = False
@@ -2110,7 +2042,7 @@ class QuickDupeApp:
 
     def on_key_press(self, event):
         print(f"[DEBUG] on_key_press called: key={event.keysym}, recording_ghost={self.recording_ghost}, recording_stop={self.recording_stop}")
-        if not self.recording_dc and not self.recording_throwable and not self.recording_triggernade and not self.recording_mine and not self.recording_espam and not self.recording_dc_both and not self.recording_dc_outbound and not self.recording_dc_inbound and not self.recording_tamper and not self.recording_minimize and not self.recording_tray and not self.recording_untitled1 and not self.recording_ghost and not self.recording_stop:
+        if not self.recording_throwable and not self.recording_triggernade and not self.recording_mine and not self.recording_espam and not self.recording_dc_both and not self.recording_dc_outbound and not self.recording_dc_inbound and not self.recording_tamper and not self.recording_minimize and not self.recording_tray and not self.recording_untitled1 and not self.recording_ghost and not self.recording_stop:
             print("[DEBUG] on_key_press: early return - no recording flags set")
             return
 
@@ -2177,11 +2109,7 @@ class QuickDupeApp:
 
         # ESC clears the hotkey
         if key == 'esc':
-            if self.recording_dc:
-                self.dc_hotkey_var.set("")
-                self.dc_record_btn.config(text="Set")
-                self.recording_dc = False
-            elif self.recording_throwable:
+            if self.recording_throwable:
                 self.throwable_hotkey_var.set("")
                 self.throwable_record_btn.config(text="Set")
                 self.recording_throwable = False
@@ -2246,7 +2174,6 @@ class QuickDupeApp:
 
             # Clear this hotkey from any other action first
             all_hotkey_vars = [
-                self.dc_hotkey_var,
                 self.throwable_hotkey_var,
                 self.triggernade_hotkey_var,
                 self.mine_hotkey_var,
@@ -2265,11 +2192,7 @@ class QuickDupeApp:
                 if var.get() == hotkey:
                     var.set("")
 
-            if self.recording_dc:
-                self.dc_hotkey_var.set(hotkey)
-                self.dc_record_btn.config(text="Set")
-                self.recording_dc = False
-            elif self.recording_throwable:
+            if self.recording_throwable:
                 self.throwable_hotkey_var.set(hotkey)
                 self.throwable_record_btn.config(text="Set")
                 self.recording_throwable = False
@@ -2398,7 +2321,6 @@ class QuickDupeApp:
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2417,7 +2339,6 @@ class QuickDupeApp:
         self.recording_dc_both = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2436,7 +2357,6 @@ class QuickDupeApp:
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_tamper = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2455,7 +2375,6 @@ class QuickDupeApp:
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2472,7 +2391,6 @@ class QuickDupeApp:
         self._recording_previous_value = self.minimize_hotkey_var.get()
         self.recording_minimize = True
         self.recording_tray = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2491,7 +2409,6 @@ class QuickDupeApp:
         self._recording_previous_value = self.tray_hotkey_var.get()
         self.recording_tray = True
         self.recording_minimize = False
-        self.recording_dc = False
         self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
@@ -2505,52 +2422,7 @@ class QuickDupeApp:
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.focus_force()
 
-    def on_drag_drop_manual_toggle(self):
-        """User manually toggled drag drop - remember their preference and update button text"""
-        self.config["drag_drop_user_set"] = True  # User explicitly set this
-        self._update_record_button_text()
-        self.save_settings()
-
-    def _update_record_button_text(self):
-        """Update record button text and position displays based on drag drop mode"""
-        use_drag = self.use_drag_drop_var.get()
-
-        # Update keydoor display
-        if use_drag:
-            self.keydoor_drag_var.set(f"({self.keydoor_drag_start[0]},{self.keydoor_drag_start[1]}) → ({self.keydoor_drag_end[0]},{self.keydoor_drag_end[1]})")
-        else:
-            self.keydoor_drag_var.set(f"Pos: ({self.keydoor_slot_pos[0]},{self.keydoor_slot_pos[1]})")
-
-        # Update triggernade display
-        if use_drag:
-            self.trig_drag_var.set(f"({self.trig_drag_start[0]},{self.trig_drag_start[1]}) → ({self.trig_drag_end[0]},{self.trig_drag_end[1]})")
-        else:
-            self.trig_drag_var.set(f"Pos: ({self.trig_slot_pos[0]},{self.trig_slot_pos[1]})")
-
-        # Update mine display
-        if use_drag:
-            self.mine_drag_var.set(f"({self.mine_drag_start[0]},{self.mine_drag_start[1]}) → ({self.mine_drag_end[0]},{self.mine_drag_end[1]})")
-        else:
-            self.mine_drag_var.set(f"Pos: ({self.mine_slot_pos[0]},{self.mine_slot_pos[1]})")
-
-    def auto_enable_drag_drop_if_no_vigembus(self):
-        """Auto-enable drag drop if ViGEmBus failed, but only if user hasn't manually set preference"""
-        if not self.config.get("drag_drop_user_set", False):
-            # User hasn't manually set it, so auto-enable
-            self.use_drag_drop_var.set(True)
-            self.config["use_drag_drop"] = True
-            save_config(self.config)
-            print("[VIGEMBUS] Auto-enabled drag drop fallback")
-
     def save_settings(self):
-        # Keydoor settings
-        self.config["dc_hotkey"] = self.dc_hotkey_var.get()
-        self.config["keydoor_x_hold"] = self.keydoor_x_hold_var.get()
-        self.config["keydoor_tab_hold"] = self.keydoor_tab_hold_var.get()
-        self.config["keydoor_wait_before_e"] = self.keydoor_wait_before_e_var.get()
-        self.config["keydoor_espam_count"] = self.keydoor_espam_count_var.get()
-        self.config["keydoor_e_hold"] = self.keydoor_e_hold_var.get()
-        self.config["keydoor_e_delay"] = self.keydoor_e_delay_var.get()
         # Throwable settings
         self.config["throwable_hotkey"] = self.throwable_hotkey_var.get()
         self.config["throwable_repeat"] = self.throwable_repeat_var.get()
@@ -2586,11 +2458,14 @@ class QuickDupeApp:
         self.config["mine_repeat"] = self.mine_repeat_var.get()
         self.config["mine_cook"] = self.mine_cook_var.get()
         self.config["mine_dc_delay"] = self.mine_dc_delay_var.get()
-        self.config["mine_x_hold"] = self.mine_x_hold_var.get()
         self.config["mine_click_delay"] = self.mine_click_delay_var.get()
         self.config["mine_pickup_hold"] = self.mine_pickup_hold_var.get()
         self.config["mine_e_delay"] = self.mine_e_delay_var.get()
         self.config["mine_loop_delay"] = self.mine_loop_delay_var.get()
+        self.config["mine_reselect"] = self.mine_reselect_var.get()
+        self.config["mine_reselect_key"] = self.mine_reselect_key_var.get()
+        self.config["mine_nudge"] = self.mine_nudge_var.get()
+        self.config["mine_nudge_px"] = self.mine_nudge_px_var.get()
         # E-spam settings
         self.config["espam_hold_mode"] = self.espam_hold_mode_var.get()
         self.config["espam_repeat_delay"] = self.espam_repeat_delay_var.get()
@@ -2608,32 +2483,12 @@ class QuickDupeApp:
         self.config["stay_on_top"] = self.stay_on_top_var.get()
         self.config["show_overlay"] = self.show_overlay_var.get()
         self.config["timing_variance"] = self.timing_variance_var.get()
-        self.config["use_drag_drop"] = self.use_drag_drop_var.get()
         # Window hotkeys
         self.config["minimize_hotkey"] = self.minimize_hotkey_var.get()
         self.config["tray_hotkey"] = self.tray_hotkey_var.get()
         # Stop all hotkey
         self.config["stop_hotkey"] = self.stop_hotkey_var.get()
         save_config(self.config)
-
-    def reset_keydoor_defaults(self):
-        """Reset all keydoor timing parameters to defaults"""
-        self.keydoor_x_hold_var.set(1250)
-        self.keydoor_tab_hold_var.set(21)
-        self.keydoor_wait_before_e_var.set(73)
-        self.keydoor_espam_count_var.set(30)
-        self.keydoor_e_hold_var.set(13)
-        self.keydoor_e_delay_var.set(12)
-        # Reset positions
-        self.keydoor_slot_pos = (3024, 669)
-        self.keydoor_drag_start = (3024, 669)
-        self.keydoor_drag_end = (550, 1247)
-        self.config["keydoor_slot_pos"] = [3024, 669]
-        self.config["keydoor_drag_start"] = [3024, 669]
-        self.config["keydoor_drag_end"] = [550, 1247]
-        self._update_record_button_text()
-        self.save_settings()
-        print("[RESET] Keydoor parameters reset to defaults")
 
     def reset_throwable_defaults(self):
         """Reset all throwable timing parameters to defaults"""
@@ -2661,6 +2516,7 @@ class QuickDupeApp:
         self.trig_reconnect_after_var.set(1)  # Reconnect after first M1
         self.trig_m1_hold_var.set(65)  # Hold M1 65ms before M2
         self.trig_m2_hold_var.set(51)  # Hold M2 for 51ms
+        self.trig_drag_speed_var.set(8)  # Drag speed
         self.trig_dc_delay_var.set(10)  # Delay before DC
         self.trig_m1_before_interweave_var.set(5)  # 5 M1s before E interweave
         self.triggernade_q_spam_var.set(True)  # Q spam enabled by default
@@ -2672,11 +2528,15 @@ class QuickDupeApp:
         """Reset all mine dupe timing parameters to defaults"""
         self.mine_cook_var.set(980)
         self.mine_dc_delay_var.set(50)
-        self.mine_x_hold_var.set(817)
+        self.mine_drag_speed_var.set(8)
         self.mine_click_delay_var.set(50)
         self.mine_pickup_hold_var.set(1800)
         self.mine_e_delay_var.set(80)
         self.mine_loop_delay_var.set(800)
+        self.mine_reselect_var.set(False)
+        self.mine_reselect_key_var.set("3")
+        self.mine_nudge_var.set(False)
+        self.mine_nudge_px_var.set(5)
         # Note: Positions are NOT reset - only timing parameters
         self.save_settings()
         print("[RESET] Mine dupe parameters reset to defaults (positions preserved)")
@@ -2719,7 +2579,6 @@ class QuickDupeApp:
 
         # Reset ALL hotkeys
         print("[RESET] Clearing all hotkeys...")
-        self.dc_hotkey_var.set("")
         self.throwable_hotkey_var.set("")
         self.triggernade_hotkey_var.set("")
         self.espam_hotkey_var.set("")
@@ -2737,7 +2596,6 @@ class QuickDupeApp:
 
         # Reset checkboxes
         print("[RESET] Resetting checkboxes...")
-        self.use_drag_drop_var.set(False)
         self.show_overlay_var.set(True)
         self.stay_on_top_var.set(False)
         self.throwable_repeat_var.set(True)
@@ -2745,7 +2603,6 @@ class QuickDupeApp:
 
         # Reset ALL timing sliders and positions
         print("[RESET] Resetting all timing defaults...")
-        self.reset_keydoor_defaults()
         self.reset_throwable_defaults()
         self.reset_triggernade_defaults()
         self.reset_mine_defaults()
@@ -2766,7 +2623,6 @@ class QuickDupeApp:
         except Exception as e:
             print(f"[HOTKEY] Error clearing hotkeys: {e}")
 
-        self.dc_hotkey_registered = None
         self.throwable_hotkey_registered = None
         self.triggernade_hotkey_registered = None
         self.espam_hotkey_registered = None
@@ -2779,26 +2635,17 @@ class QuickDupeApp:
         self.minimize_hotkey_registered = None
         self.tray_hotkey_registered = None
         # Alt+hotkey for re-recording positions
-        self.dc_rerecord_registered = None
         self.trig_rerecord_registered = None
         self.mine_rerecord_registered = None
         self.um1_rerecord_registered = None
         self.ghost_rerecord_registered = None
 
         # Register ALL hotkeys
-        dc_hk = self.dc_hotkey_var.get()
         throw_hk = self.throwable_hotkey_var.get()
         trig_hk = self.triggernade_hotkey_var.get()
         espam_hk = self.espam_hotkey_var.get()
 
-        print(f"[HOTKEY] Registering hotkeys: keydoor='{dc_hk}', throwable='{throw_hk}', triggernade='{trig_hk}', espam='{espam_hk}'")
-
-        if dc_hk and dc_hk != "Press key...":
-            try:
-                self.dc_hotkey_registered = keyboard.add_hotkey(dc_hk, self.on_dc_hotkey, suppress=False)
-                print(f"[HOTKEY] Keydoor registered OK: '{dc_hk}' -> {self.dc_hotkey_registered}")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED keydoor '{dc_hk}': {e}")
+        print(f"[HOTKEY] Registering hotkeys: throwable='{throw_hk}', triggernade='{trig_hk}', espam='{espam_hk}'")
 
         if throw_hk and throw_hk != "Press key...":
             try:
@@ -2908,15 +2755,6 @@ class QuickDupeApp:
         # Register Alt+hotkey variants for quick position re-recording
         print("[HOTKEY] Registering Alt+hotkey re-record shortcuts...")
 
-        # Keydoor: Alt+hotkey = re-record position
-        if dc_hk and dc_hk != "Press key...":
-            try:
-                alt_dc_hk = f"alt+{dc_hk}" if not dc_hk.startswith("alt+") else dc_hk
-                self.dc_rerecord_registered = keyboard.add_hotkey(alt_dc_hk, self.start_keydoor_drag_recording, suppress=False)
-                print(f"[HOTKEY] Keydoor re-record registered: '{alt_dc_hk}'")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED keydoor re-record '{alt_dc_hk}': {e}")
-
         # Triggernade: Alt+hotkey = re-record position
         if trig_hk and trig_hk != "Press key...":
             try:
@@ -2956,176 +2794,17 @@ class QuickDupeApp:
     def stop_all_macros(self):
         """Universal stop - triggered by configurable hotkey"""
         print("[HOTKEY] Stop All pressed - stopping all macros!")
-        self.keydoor_stop = True
         self.throwable_stop = True
         self.triggernade_stop = True
         self.espam_stop = True
         self.mine_stop = True
         self.untitled1_stop = True
-        self.root.after(0, lambda: self.show_overlay("All macros stopped!"))
-
-    def on_dc_hotkey(self):
-        """Run keydoor macro (runs once)"""
-        print("[HOTKEY] Keydoor hotkey PRESSED!")
-        if self.keydoor_running:
-            # Already running, stop it
-            self.keydoor_stop = True
-            print("[HOTKEY] Stopping keydoor...")
-            return
-
-        self.keydoor_stop = False
-        self.keydoor_running = True
-        # Use root.after to update UI from main thread
-        self.root.after(0, lambda: self.dc_status_var.set("RUNNING"))
-        self.root.after(0, lambda: self.dc_status_label.config(foreground="orange"))
-        self.root.after(0, lambda: self.show_overlay("Keydoor running..."))
-        threading.Thread(target=self.run_keydoor_macro, daemon=True).start()
-
-    def run_keydoor_macro(self):
-        """
-        Keydoor macro (configurable timings):
-        1. Disconnect
-        2. Hold Xbox X button (drops key)
-        3. TAB to exit inventory
-        4. Start E spam, reconnect almost immediately
-        5. Continue E spam after reconnect
-        """
-        is_disconnected = False
-        gp = get_gamepad()
-
-        # Only require gamepad if NOT using drag drop
-        if gp is None and not self.use_drag_drop_var.get():
-            print("[KEYDOOR] Skipping - ViGEmBus not installed (enable drag drop or install ViGEmBus)")
-            self.root.after(0, lambda: self.dc_status_var.set("ERROR: Install ViGEmBus"))
-            self.root.after(0, lambda: self.dc_status_label.config(foreground="red"))
-            self.keydoor_running = False
-            return
-
-        # Get configurable values
-        x_hold_ms = self.keydoor_x_hold_var.get()
-        tab_hold_ms = self.keydoor_tab_hold_var.get()
-        wait_before_e_ms = self.keydoor_wait_before_e_var.get()
-        espam_count = self.keydoor_espam_count_var.get()
-        e_hold_ms = self.keydoor_e_hold_var.get()
-        e_delay_ms = self.keydoor_e_delay_var.get()
-
-        # ===== Disconnect FIRST =====
-        print("[KEYDOOR] Disconnecting...")
-        start_packet_drop()
-        is_disconnected = True
-
-        # ===== Drop item (Xbox X or drag fallback) =====
-        print(f"[KEYDOOR] use_drag_drop_var = {self.use_drag_drop_var.get()}")
-        if self.use_drag_drop_var.get():
-            # Drag fallback using pynput - need to open inventory first
-            print(f"[KEYDOOR] Opening inventory...")
-            pynput_keyboard.press(Key.tab)
-            self.vsleep(300)
-            pynput_keyboard.release(Key.tab)
-            self.vsleep(120)
-
-            print(f"[KEYDOOR] Using drag drop: {self.keydoor_drag_start} → {self.keydoor_drag_end}")
-
-            # Clear any stuck mouse state first
-            pynput_mouse.release(MouseButton.left)
-
-            # Move to start position
-            pynput_mouse.position = self.keydoor_drag_start
-            self.vsleep(30)
-
-            # Press and drag
-            pynput_mouse.press(MouseButton.left)
-            self.vsleep(80)  # Click registers
-
-            # Smooth drag - 20 steps over ~150ms
-            start_x, start_y = self.keydoor_drag_start
-            end_x, end_y = self.keydoor_drag_end
-            dx = end_x - start_x
-            dy = end_y - start_y
-            steps = 20
-            for i in range(1, steps + 1):
-                t = i / steps
-                x = int(start_x + dx * t)
-                y = int(start_y + dy * t)
-                pynput_mouse.position = (x, y)
-                self.vsleep(7)
-
-            pynput_mouse.release(MouseButton.left)
-            print(f"[KEYDOOR] Drag complete")
-        else:
-            # Xbox X button - move to recorded slot position first
-            print(f"[KEYDOOR] Moving to {self.keydoor_slot_pos}, holding X for {x_hold_ms}ms")
-            pynput_mouse.position = self.keydoor_slot_pos
-            self.vsleep(20)
-            gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-            gp.update()
-
-            # Hold for configured time (cancelable)
-            t = 0
-            while t < x_hold_ms:
-                if self.keydoor_stop:
-                    gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-                    gp.update()
-                    self.finish_keydoor(is_disconnected)
-                    return
-                self.vsleep(10)
-                t += 10
-
-            gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-            gp.update()
-            print("[KEYDOOR] X released - key should be dropped")
-
-        if self.keydoor_stop:
-            self.finish_keydoor(is_disconnected)
-            return
-
-        # TAB to exit inventory
-        pynput_keyboard.press(Key.tab)
-        self.vsleep(tab_hold_ms)
-        pynput_keyboard.release(Key.tab)
-        self.vsleep(wait_before_e_ms)
-        print("[KEYDOOR] TAB - exited inventory")
-
-        if self.keydoor_stop:
-            self.finish_keydoor(is_disconnected)
-            return
-
-        # ===== E spam - reconnect after just 1 press =====
-        print("[KEYDOOR] Starting E spam...")
-        pynput_keyboard.press('e')
-        self.vsleep(e_hold_ms)
-        pynput_keyboard.release('e')
-        self.vsleep(7)
-
-        # ===== Reconnect almost immediately =====
-        print("[KEYDOOR] Reconnecting...")
-        stop_packet_drop()
-        is_disconnected = False
-
-        # ===== Continue E spam after reconnect =====
-        print(f"[KEYDOOR] Spamming E {espam_count}x...")
-        for i in range(espam_count):
-            if self.keydoor_stop:
-                break
-            pynput_keyboard.press('e')
-            self.vsleep(e_hold_ms)
-            pynput_keyboard.release('e')
-            self.vsleep(e_delay_ms)
-
-        # Done
-        print("[KEYDOOR] Done!")
-        self.finish_keydoor(is_disconnected)
-
-    def finish_keydoor(self, is_disconnected):
-        """Clean up keydoor macro"""
-        if is_disconnected:
-            stop_packet_drop()
-        self.keydoor_running = False
-        self.keydoor_stop = False
-        # Use root.after to update UI from main thread
-        self.root.after(0, lambda: self.dc_status_var.set("Ready"))
-        self.root.after(0, lambda: self.dc_status_label.config(foreground="gray"))
-        self.root.after(0, lambda: self.show_overlay("Keydoor done."))
+        # Also cancel any active recordings
+        self._drag_recording_cancelled = True
+        self._mine_recording_cancelled = True
+        self._um1_recording_cancelled = True
+        self._ghost_recording_cancelled = True
+        self.root.after(0, lambda: self.show_overlay("Stopped"))
 
     def on_throwable_hotkey(self):
         """Toggle throwable macro"""
@@ -3392,53 +3071,17 @@ class QuickDupeApp:
                 if self.triggernade_stop:
                     break
 
-                # ===== Wait then drop (uses recorded timing) =====
-                if self.use_drag_drop_var.get():
-                    # Drag fallback using pynput
-                    self.vsleep(120)  # Wait for inventory to open
-
-                    # Clear any stuck mouse state first
-                    pynput_mouse.release(MouseButton.left)
-
-                    # Move to start position
-                    pynput_mouse.position = self.trig_drag_start
-                    self.vsleep(30)
-
-                    # Press and drag
-                    pynput_mouse.press(MouseButton.left)
-                    self.vsleep(80)  # Click registers
-
-                    # Smooth drag - 20 steps over ~150ms
-                    start_x, start_y = self.trig_drag_start
-                    end_x, end_y = self.trig_drag_end
-                    dx = end_x - start_x
-                    dy = end_y - start_y
-                    steps = 20
-                    for i in range(1, steps + 1):
-                        t = i / steps
-                        x = int(start_x + dx * t)
-                        y = int(start_y + dy * t)
-                        pynput_mouse.position = (x, y)
-                        self.vsleep(7)
-
-                    pynput_mouse.release(MouseButton.left)
-                    print(f"[{cycle}] Dropped with drag: {self.trig_drag_start} → {self.trig_drag_end}")
-                else:
-                    # Xbox X button - uses original hardcoded timing
-                    self.vsleep(300)  # Wait before drop
-                    x_hold_ms = self.keydoor_x_hold_var.get()
-                    pynput_mouse.position = self.trig_slot_pos
-                    self.vsleep(20)
-                    gp = get_gamepad()
-                    if gp:
-                        gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-                        gp.update()
-                        self.vsleep(x_hold_ms)
-                        gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-                        gp.update()
-                        print(f"[{cycle}] Dropped with X ({x_hold_ms}ms)")
-                    else:
-                        print(f"[{cycle}] ERROR: No gamepad for X drop")
+                # ===== Wait then drop via curved drag =====
+                self.vsleep(120)  # Wait for inventory to open
+                pynput_mouse.release(MouseButton.left)
+                pynput_mouse.position = self.trig_drag_start
+                self.vsleep(30)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(50)
+                drag_speed = self.trig_drag_speed_var.get()
+                self.curved_drag(self.trig_drag_start, self.trig_drag_end, steps=25, step_delay=drag_speed)
+                pynput_mouse.release(MouseButton.left)
+                print(f"[{cycle}] Dropped with curved drag")
 
                 if self.triggernade_stop:
                     break
@@ -3651,12 +3294,11 @@ class QuickDupeApp:
                 # Read all timing values ONCE at cycle start
                 cook_time = self.mine_cook_var.get()
                 dc_delay = self.mine_dc_delay_var.get()
-                x_hold_ms = self.mine_x_hold_var.get()
                 click_delay = self.mine_click_delay_var.get()
                 dupe_click_hold = self.mine_pickup_hold_var.get()
                 e_delay = self.mine_e_delay_var.get()
                 loop_delay = self.mine_loop_delay_var.get()
-                print(f"[{cycle}] Timings: cook={cook_time}, dc_delay={dc_delay}, x_hold={x_hold_ms}, click_delay={click_delay}, dupe_hold={dupe_click_hold}")
+                print(f"[{cycle}] Timings: cook={cook_time}, dc_delay={dc_delay}, click_delay={click_delay}, dupe_hold={dupe_click_hold}")
 
                 self.root.after(0, lambda c=cycle: self.show_overlay(f"Mine {c}"))
 
@@ -3698,44 +3340,16 @@ class QuickDupeApp:
 
                 self.vsleep(30)  # 30ms
 
-                # ===== Drop item =====
-                if self.use_drag_drop_var.get():
-                    # Drag drop using pynput
-                    pynput_mouse.release(MouseButton.left)
-                    pynput_mouse.position = self.mine_drag_start
-                    self.vsleep(30)
-
-                    pynput_mouse.press(MouseButton.left)
-                    self.vsleep(80)
-
-                    # Smooth drag
-                    start_x, start_y = self.mine_drag_start
-                    end_x, end_y = self.mine_drag_end
-                    dx = end_x - start_x
-                    dy = end_y - start_y
-                    steps = 20
-                    for i in range(1, steps + 1):
-                        t = i / steps
-                        x = int(start_x + dx * t)
-                        y = int(start_y + dy * t)
-                        pynput_mouse.position = (x, y)
-                        self.vsleep(7)
-
-                    pynput_mouse.release(MouseButton.left)
-                    print(f"[{cycle}] Dropped with drag")
-                else:
-                    # Xbox X button using ViGEmBus
-                    x_hold_ms = self.mine_x_hold_var.get()
-                    pynput_mouse.position = self.mine_slot_pos  # Move to slot position
-                    self.vsleep(20)
-                    gp = get_gamepad()
-                    if gp:
-                        gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-                        gp.update()
-                        self.vsleep(x_hold_ms)
-                        gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-                        gp.update()
-                        print(f"[{cycle}] Dropped with Xbox X ({x_hold_ms}ms)")
+                # ===== Drop item via curved drag =====
+                pynput_mouse.release(MouseButton.left)
+                pynput_mouse.position = self.mine_drag_start
+                self.vsleep(30)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(50)
+                drag_speed = self.mine_drag_speed_var.get()
+                self.curved_drag(self.mine_drag_start, self.mine_drag_end, steps=25, step_delay=drag_speed)
+                pynput_mouse.release(MouseButton.left)
+                print(f"[{cycle}] Dropped with curved drag")
 
                 if self.mine_stop:
                     break
@@ -3789,10 +3403,36 @@ class QuickDupeApp:
 
                 # Q to swap back to mine in quick use
                 self.vsleep(100)
-                pynput_keyboard.press('q')
-                self.vsleep(50)
-                pynput_keyboard.release('q')
-                print(f"[{cycle}] Pressed Q to swap back")
+                if self.mine_reselect_var.get():
+                    # Hold Q + press reselect key (need delay for wheel to open)
+                    reselect_key = self.mine_reselect_key_var.get()
+                    pynput_keyboard.press('q')
+                    self.vsleep(500)  # Wait for quick-use wheel to fully open
+                    pynput_keyboard.press(reselect_key)
+                    self.vsleep(50)
+                    pynput_keyboard.release(reselect_key)
+                    self.vsleep(50)
+                    pynput_keyboard.release('q')
+                    print(f"[{cycle}] Hold Q + {reselect_key} to reselect")
+                else:
+                    pynput_keyboard.press('q')
+                    self.vsleep(50)
+                    pynput_keyboard.release('q')
+                    print(f"[{cycle}] Pressed Q to swap back")
+
+                # Optional mouse nudge to avoid mines stacking
+                if self.mine_nudge_var.get():
+                    nudge_px = self.mine_nudge_px_var.get()
+                    # Use SendInput for raw mouse movement games detect
+                    class MOUSEINPUT(ctypes.Structure):
+                        _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong),
+                                    ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+                    class INPUT(ctypes.Structure):
+                        _fields_ = [("type", ctypes.c_ulong), ("mi", MOUSEINPUT)]
+                    MOUSEEVENTF_MOVE = 0x0001
+                    inp = INPUT(type=0, mi=MOUSEINPUT(dx=nudge_px, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_MOVE, time=0, dwExtraInfo=None))
+                    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+                    print(f"[{cycle}] Nudged mouse {nudge_px}px right")
 
                 # Wait before next cycle (scales with variance slider - more extreme)
                 loop_delay_ms = self.mine_loop_delay_var.get()
@@ -4185,15 +3825,27 @@ class QuickDupeApp:
             self.root.after(0, lambda: self.untitled1_status_label.config(foreground="gray"))
             self.root.after(0, lambda: self.show_overlay("Ammo stopped."))
 
-    def show_overlay(self, text):
-        if not self.show_overlay_var.get():
+    def show_overlay(self, text, force=False):
+        if not force and not self.show_overlay_var.get():
             return
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
             self.overlay_window = tk.Toplevel(self.root)
             self.overlay_window.overrideredirect(True)
             self.overlay_window.attributes('-topmost', True)
             self.overlay_window.attributes('-transparentcolor', 'black')
+            self.overlay_window.attributes('-disabled', True)  # Prevent focus steal
             self.overlay_window.configure(bg='black')
+
+            # Windows: Set WS_EX_NOACTIVATE to prevent focus stealing
+            self.overlay_window.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.overlay_window.winfo_id())
+            GWL_EXSTYLE = -20
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_APPWINDOW = 0x00040000
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = style | WS_EX_NOACTIVATE
+            style = style & ~WS_EX_APPWINDOW  # Also hide from taskbar
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
 
             # Use canvas for text with outline
             self.overlay_canvas = tk.Canvas(self.overlay_window, bg='black', highlightthickness=0)
@@ -4241,7 +3893,6 @@ class QuickDupeApp:
 
     def on_close(self):
         self.throwable_stop = True
-        self.keydoor_stop = True
         self.triggernade_stop = True
         self.espam_stop = True
 
@@ -4257,11 +3908,6 @@ class QuickDupeApp:
         if self.drag_mouse_listener:
             try:
                 self.drag_mouse_listener.stop()
-            except:
-                pass
-        if self.dc_hotkey_registered:
-            try:
-                keyboard.remove_hotkey(self.dc_hotkey_registered)
             except:
                 pass
         if self.throwable_hotkey_registered:
@@ -4289,6 +3935,9 @@ class QuickDupeApp:
 
 
 if __name__ == "__main__":
+    # Obfuscation: rename exe to UUID name on first run (if enabled)
+    rename_self_and_restart()
+
     # Make app DPI-aware so mouse coordinates are consistent
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
@@ -4303,18 +3952,13 @@ if __name__ == "__main__":
         sys.exit()
 
     print("=" * 50)
-    print("QD 1.4.0 Starting...")
-
-    # Initialize gamepad once at startup
-    init_gamepad()
+    print(f"{APP_NAME} Starting...")
+    if OBFUSCATION_ENABLED:
+        print(f"[OBFUS] Build ID: {BUILD_ID}")
     print("=" * 50)
 
     root = tk.Tk()
     app = QuickDupeApp(root)
-
-    # Auto-enable drag drop if ViGEmBus failed
-    if get_gamepad() is None:
-        app.auto_enable_drag_drop_if_no_vigembus()
 
     # Apply stay-on-top setting from config
     if app.config.get("stay_on_top", False):
@@ -4322,7 +3966,6 @@ if __name__ == "__main__":
         print("[UI] Stay on top enabled from config")
 
     print(f"[CONFIG] Loaded config: {app.config}")
-    print(f"[CONFIG] Keydoor hotkey: '{app.dc_hotkey_var.get()}'")
     print(f"[CONFIG] Throwable hotkey: '{app.throwable_hotkey_var.get()}'")
 
     app.register_hotkeys()
