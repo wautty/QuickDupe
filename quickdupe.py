@@ -38,7 +38,7 @@ def _check_obfuscation_enabled():
 
 OBFUSCATION_ENABLED = _check_obfuscation_enabled()
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 
 # Generate random app name (8-18 chars) if obfuscation enabled, otherwise use default
 if OBFUSCATION_ENABLED:
