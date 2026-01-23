@@ -62,10 +62,10 @@ pyinstaller QuickDupe.spec
 
 ### 1.5.2 Notes:
 In order to build/launch 1.5.2 you will need to download the following PNG files to the same directory as script:
-N.png
-NE.png
-E.png
-SE.png
-S.png
-SW.png
-NONE.png
+`N.png`
+`NE.png`
+`E.png`
+`SE.png`
+`S.png`
+`SW.png`
+`NONE.png`
