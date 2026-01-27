@@ -6,55 +6,22 @@ import threading
 import json
 import os
 import time
+import uuid
 import hashlib
 import random
 import string
-import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog
 import logging
 
-# =============================================================================
-# OBFUSCATION FEATURES (opt-in: requires "obfuscate" file next to exe)
-# NOTE IF YOU SEE THIS, AND YOU TOOK THE TIME TO READ THE CODE AND
-# LEARN ABOUT THE OBFUSCATE FEATURE, PLEASE DO NOT MENTION IT IN THE CHAT
-# INSTEAD, SIMPLY UTILIZE IT IF YOU WISH, WHILE NOTING THAT IN THE WORLD
-# OF CAT AND MOUSE THAT IS EXPLOITS VS ANTICHEATS, AN ACT TO AVOID DETECTION
-# CAN BE THE CATALYST THAT CAUSES DETECTION ITSELF, SUCH IS LIFE
-# USING ANY EXPLOIT IN ANY WAY IS ALWAYS A RISK.
-#                              -LOVE, 
-#                               KILLINMESMALLS/YOUSTAYGOLD/YOUR FATHER
-# =============================================================================
-# Unique build identifier - generated fresh each build by build.py
+# Unique build identifier - generated fresh each build
 BUILD_ID = "__BUILD_ID_PLACEHOLDER__"
 
-def _check_obfuscation_enabled():
-    """Check if obfuscation is enabled by looking for 'obfuscate' file next to exe"""
-    if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-    else:
-        exe_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.exists(os.path.join(exe_dir, "obfuscate"))
-
-OBFUSCATION_ENABLED = _check_obfuscation_enabled()
-
-VERSION = "1.5.2"
-
-# Generate random app name (8-18 chars) if obfuscation enabled, otherwise use default
-if OBFUSCATION_ENABLED:
-    _name_length = random.randint(8, 18)
-    _random_name = ''.join(random.choices(string.ascii_letters, k=_name_length))
-    APP_NAME = f"{_random_name} {VERSION}"
-else:
-    _random_name = "QD"
-    APP_NAME = f"QD {VERSION}"
+# Random app name generated each run
+APP_NAME = ''.join(random.choices(string.ascii_letters, k=10))
 
 def rename_self_and_restart():
-    """Rename the running EXE to match the random app name.
-    Only runs when obfuscation is enabled and running as frozen exe."""
-    if not OBFUSCATION_ENABLED:
-        return False
-
+    """Rename the running EXE to a unique name if marker file doesn't exist"""
     # Only works for frozen exe, not script
     if not getattr(sys, 'frozen', False):
         return False
@@ -67,8 +34,9 @@ def rename_self_and_restart():
     if os.path.exists(marker_file):
         return False
 
-    # Use the random name generated for APP_NAME
-    new_name = f"{_random_name}.exe"
+    # Generate new unique name
+    unique_name = str(uuid.uuid4())
+    new_name = f"{unique_name}.exe"
     new_path = os.path.join(current_dir, new_name)
 
     try:
@@ -83,14 +51,14 @@ def rename_self_and_restart():
         # Launch the new exe
         subprocess.Popen([new_path] + sys.argv[1:])
 
-        print(f"[OBFUS] Created: {new_name}")
-        print(f"[OBFUS] Delete 'DELETETOCHANGEID' to generate new name.")
+        print(f"[RENAME] Created: {new_name}")
+        print(f"[RENAME] Delete 'DELETETOCHANGEID' to generate new name.")
 
         # Exit this instance
         sys.exit(0)
 
     except Exception as e:
-        print(f"[OBFUS] Rename failed: {e}")
+        print(f"[RENAME] Failed: {e}")
         return False
 
     return True
@@ -107,25 +75,74 @@ log = logging.getLogger("QuickDupe")
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Button as MouseButton, Controller as MouseController
 
+# vgamepad loaded lazily to avoid crash if ViGEmBus not installed
+vg = None
+
 # pynput controllers
 pynput_keyboard = KeyboardController()
 pynput_mouse = MouseController()
 
-# Packet drop via WinDivert (lazy loaded to avoid network interference on startup)
-_pydivert = None  # Lazy loaded
+# Virtual Xbox controller - initialize once at startup
+_gamepad = None
+_vigem_warned = False
+
+def install_vigem():
+    """Run the bundled ViGEmBus installer"""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    installer_path = os.path.join(base_path, "ViGEmBus_1.22.0_x64_x86_arm64.exe")
+
+    if os.path.exists(installer_path):
+        print("[INSTALL] Launching ViGEmBus installer...")
+        # Launch installer normally so user can see/interact with it
+        subprocess.Popen([installer_path])
+        return True
+    else:
+        print(f"[ERROR] Installer not found at: {installer_path}")
+        return False
+
+def init_gamepad():
+    """Initialize gamepad once at startup, auto-install driver if needed"""
+    global _gamepad, _vigem_warned, vg
+
+    # Try to import and create gamepad
+    try:
+        import vgamepad as vgamepad_module
+        vg = vgamepad_module
+        _gamepad = vg.VX360Gamepad()
+        _gamepad.reset()  # Clear any phantom button state
+        _gamepad.update()
+        print("[GAMEPAD] Virtual Xbox controller initialized")
+        return True
+    except Exception as e:
+        # Driver not installed or not working
+        print(f"[GAMEPAD] ViGEmBus error: {e}")
+        print("[GAMEPAD] Attempting auto-install...")
+        if install_vigem():
+            print("[GAMEPAD] ViGEmBus installed! Restart app to use keydoor macro.")
+        else:
+            print("[WARNING] Install ViGEmBus manually: https://github.com/nefarius/ViGEmBus/releases")
+        _vigem_warned = True
+        return False
+
+def get_gamepad():
+    """Return the pre-initialized gamepad"""
+    return _gamepad
+
+# Packet drop via WinDivert
+import pydivert
+
 _handle = None
 _on = False
 
 def start_packet_drop(outbound=True, inbound=True):
     """DROP PACKETS NOW"""
-    global _handle, _on, _pydivert
+    global _handle, _on
     if _on:
         return
-
-    # Lazy load pydivert only when needed
-    if _pydivert is None:
-        import pydivert
-        _pydivert = pydivert
 
     # Match Clumsy's exact filter syntax
     if outbound and inbound:
@@ -136,7 +153,7 @@ def start_packet_drop(outbound=True, inbound=True):
         filt = "inbound"
 
     try:
-        _handle = _pydivert.WinDivert(filt)
+        _handle = pydivert.WinDivert(filt)
         _handle.open()
         _on = True
         threading.Thread(target=_drop_loop, daemon=True).start()
@@ -183,14 +200,9 @@ _tamper_patterns = [0x64, 0x13, 0x88, 0x40, 0x1F, 0xA0, 0xAA, 0x55]
 
 def start_packet_tamper(outbound=True, inbound=True):
     """Start tampering packets - corrupt data but still send"""
-    global _tamper_handle, _tamper_on, _pydivert
+    global _tamper_handle, _tamper_on
     if _tamper_on:
         return
-
-    # Lazy load pydivert only when needed
-    if _pydivert is None:
-        import pydivert
-        _pydivert = pydivert
 
     if outbound and inbound:
         filt = "outbound or inbound"
@@ -200,7 +212,7 @@ def start_packet_tamper(outbound=True, inbound=True):
         filt = "inbound"
 
     try:
-        _tamper_handle = _pydivert.WinDivert(filt)
+        _tamper_handle = pydivert.WinDivert(filt)
         _tamper_handle.open()
         _tamper_on = True
         threading.Thread(target=_tamper_loop, daemon=True).start()
@@ -271,10 +283,6 @@ class QuickDupeApp:
         self.root.resizable(False, True)  # Allow vertical resize
         self.root.overrideredirect(True)  # Remove Windows title bar
 
-        # Disable tkinter bell sound (prevents beeps during macros)
-        self.root.bell = lambda: None
-        self.root.bind('<Key>', lambda e: None)  # Suppress key event beeps
-
         # Force show in taskbar despite overrideredirect
         self.root.after(10, self._fix_taskbar)
 
@@ -329,17 +337,19 @@ class QuickDupeApp:
                 self.root.geometry(f"+{saved_x}+{saved_y}")
 
         # State
+        self.dc_hotkey_registered = None
+        self.throwable_hotkey_registered = None
         self.triggernade_hotkey_registered = None
         self.disconnected = False
+        self.throwable_running = False
+        self.throwable_stop = False
+        self.keydoor_running = False
+        self.keydoor_stop = False
         self.triggernade_running = False
         self.triggernade_stop = False
         self.triggernade_m1_count = 13  # ~13 M1s before reconnect
         self.triggernade_dc_delay = 0.050  # Delay before disconnect (seconds)
         self.triggernade_run_count = 0  # Track runs for randomizing delay
-        self.quickdrop_running = False
-        self.quickdrop_stop = False
-        self.quickdrop_hotkey_registered = None
-        self.recording_quickdrop = False
         self.mine_running = False
         self.mine_stop = False
         self.mine_hotkey_registered = None
@@ -347,8 +357,11 @@ class QuickDupeApp:
         self.espam_stop = False
         self.espam_hotkey_registered = None
         self.escape_hotkey_registered = None
-        # Stop All state
-        self.recording_stop = False
+        # Ammo state
+        self.untitled1_running = False
+        self.untitled1_stop = False
+        self.untitled1_hotkey_registered = None
+        self.recording_untitled1 = False
         # Quick disconnect state
         self.test_disconnected = False
         self.tampering = False
@@ -360,21 +373,14 @@ class QuickDupeApp:
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_mine = False
         self.recording_espam = False
         self.recording_drag = False
-        self._recording_previous_value = None  # Store previous value for ESC cancel
-        self._drag_recording_cancelled = False  # For ESC cancel of drag recordings
-        self._mine_recording_cancelled = False  # For ESC cancel of mine recordings
         self.drag_mouse_listener = None
         self.listening = True  # Always listening
-
-        # Locks to prevent race conditions in hotkey handlers
-        self._mine_lock = threading.Lock()
-        self._triggernade_lock = threading.Lock()
-        self._quickdrop_lock = threading.Lock()
-        self._espam_lock = threading.Lock()
 
         # Overlay
         self.overlay_window = None
@@ -428,17 +434,8 @@ class QuickDupeApp:
         return max(1, ms + delta)  # Never go below 1ms
 
     def vsleep(self, ms):
-        """Sleep for ms with variance applied. Checks stop flags every 50ms for responsiveness."""
-        total_ms = self.vary(ms)
-        chunk_ms = 50  # Check every 50ms for stop signals
-        elapsed = 0
-        while elapsed < total_ms:
-            # Check all stop flags
-            if self.mine_stop or self.triggernade_stop or self.espam_stop:
-                return  # Exit sleep early if any stop requested
-            sleep_time = min(chunk_ms, total_ms - elapsed)
-            time.sleep(sleep_time / 1000.0)
-            elapsed += sleep_time
+        """Sleep for ms with variance applied. Takes ms, handles conversion to seconds."""
+        time.sleep(self.vary(ms) / 1000.0)
 
     def vary_balanced(self, ms, count):
         """Generate 'count' delays that each vary but sum to exactly ms*count.
@@ -458,47 +455,47 @@ class QuickDupeApp:
         # Apply to base timing, ensure minimum 1ms
         return [max(1, ms + d) for d in deltas]
 
-    def curved_drag(self, start, end, steps=20, step_delay=5):
-        """Perform a drag from start to end with a randomized curved path"""
-        import random
-        import math
+    def _show_vigembus_help(self):
+        """Show popup with clickable links for ViGEmBus help"""
+        import webbrowser
 
-        start_x, start_y = start
-        end_x, end_y = end
-        dx = end_x - start_x
-        dy = end_y - start_y
+        popup = tk.Toplevel(self.root)
+        popup.title("ViGEmBus Setup")
+        popup.configure(bg='#1e1e1e')
+        popup.geometry("450x380")
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        popup.grab_set()
 
-        # Random curve offset perpendicular to the path
-        # Magnitude is 5-15% of the path length
-        path_length = math.sqrt(dx*dx + dy*dy)
-        curve_magnitude = path_length * random.uniform(0.05, 0.15)
-        # Random direction (left or right of path)
-        curve_sign = random.choice([-1, 1])
-        # Perpendicular vector (normalized)
-        if path_length > 0:
-            perp_x = -dy / path_length * curve_magnitude * curve_sign
-            perp_y = dx / path_length * curve_magnitude * curve_sign
-        else:
-            perp_x, perp_y = 0, 0
+        # Center on parent
+        popup.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (225)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (140)
+        popup.geometry(f"+{x}+{y}")
 
-        # Move mouse through curved path using quadratic bezier
-        for i in range(steps + 1):
-            t = i / steps
-            # Quadratic bezier: P = (1-t)^2 * P0 + 2(1-t)t * P1 + t^2 * P2
-            # P0 = start, P2 = end, P1 = midpoint + perpendicular offset
-            mid_x = (start_x + end_x) / 2 + perp_x
-            mid_y = (start_y + end_y) / 2 + perp_y
+        tk.Label(popup, text="ViGEmBus is preferred for consistency.",
+                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 10, 'bold')).pack(pady=(15, 10))
 
-            x = (1-t)**2 * start_x + 2*(1-t)*t * mid_x + t**2 * end_x
-            y = (1-t)**2 * start_y + 2*(1-t)*t * mid_y + t**2 * end_y
+        tk.Label(popup, text="Step 1: Install ViGEmBus driver",
+                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
+        link1 = tk.Label(popup, text="https://github.com/nefarius/ViGEmBus/releases",
+                        bg='#1e1e1e', fg='#4da6ff', cursor='hand2', font=('Segoe UI', 9, 'underline'))
+        link1.pack()
+        link1.bind('<Button-1>', lambda e: webbrowser.open("https://github.com/nefarius/ViGEmBus/releases"))
 
-            # Add tiny random jitter
-            jitter = random.uniform(-2, 2)
-            x += jitter
-            y += jitter
+        tk.Label(popup, text="\nStep 2: If still not working, also install:",
+                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
+        link2 = tk.Label(popup, text="Xbox 360 Accessories Software",
+                        bg='#1e1e1e', fg='#4da6ff', cursor='hand2', font=('Segoe UI', 9, 'underline'))
+        link2.pack()
+        link2.bind('<Button-1>', lambda e: webbrowser.open("https://community.pcgamingwiki.com/files/file/2630-xbox-360-accessories-software-v12/"))
 
-            pynput_mouse.position = (int(x), int(y))
-            self.vsleep(step_delay)
+        tk.Label(popup, text="\nStep 3: If STILL not working:",
+                 bg='#1e1e1e', fg='#e0e0e0', font=('Segoe UI', 9)).pack(pady=(5, 2))
+        tk.Label(popup, text="Check the drag & drop box and record\ndrag paths for every macro you use.",
+                 bg='#1e1e1e', fg='#aaaaaa', font=('Segoe UI', 9)).pack()
+
+        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=15)
 
     def _fix_taskbar(self):
         """Make window show in taskbar despite overrideredirect"""
@@ -646,15 +643,6 @@ class QuickDupeApp:
         style.map('TCheckbutton', background=[('active', self.colors['bg'])])
         style.configure('TEntry', fieldbackground=self.colors['bg_light'], foreground=self.colors['text'],
                         borderwidth=0, relief='flat', padding=2)
-        style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d',
-                        foreground='#e0e0e0', arrowcolor='#e0e0e0')
-        style.map('TCombobox', fieldbackground=[('readonly', '#2d2d2d')],
-                  selectbackground=[('readonly', '#404040')],
-                  selectforeground=[('readonly', '#e0e0e0')])
-        self.root.option_add('*TCombobox*Listbox.background', '#2d2d2d')
-        self.root.option_add('*TCombobox*Listbox.foreground', '#e0e0e0')
-        self.root.option_add('*TCombobox*Listbox.selectBackground', '#404040')
-        self.root.option_add('*TCombobox*Listbox.selectForeground', '#e0e0e0')
         style.configure('TSeparator', background=self.colors['accent'])
 
         # Scrollbar styling - use 'alt' theme element (no grip lines)
@@ -739,10 +727,16 @@ class QuickDupeApp:
             pass
 
         # Title label
-        title_label = tk.Label(title_bar, text=APP_NAME, bg=self.colors['bg_light'],
+        title_label = tk.Label(title_bar, text=APP_NAME[:6], bg=self.colors['bg_light'],
                                fg=self.colors['text'], font=('Arial', 10, 'bold'))
         title_label.pack(side='left', padx=2)
 
+        # Build ID label (short version, full ID in tooltip)
+        build_short = BUILD_ID[:8] if BUILD_ID != "__BUILD_ID_PLACEHOLDER__" else "DEV"
+        build_label = tk.Label(title_bar, text=f"[{build_short}]", bg=self.colors['bg_light'],
+                              fg=self.colors['text_dim'], font=('Consolas', 7))
+        build_label.pack(side='left', padx=2)
+        self._add_tooltip(build_label, f"Build ID: {BUILD_ID}")
 
         # Close button (rightmost)
         close_btn = tk.Label(title_bar, text=" ✕ ", bg=self.colors['bg_light'],
@@ -865,7 +859,18 @@ class QuickDupeApp:
         self.variance_label.pack(side='left')
         self.timing_variance_var.trace_add('write', lambda *args: self.variance_label.config(text=f"±{self.timing_variance_var.get()}%"))
 
-        # Drag timing values
+        # ===== DRAG DROP FALLBACK =====
+        # Only use drag drop if: user manually enabled it, OR vigembus failed and user hasn't disabled it
+        self.use_drag_drop_var = tk.BooleanVar(value=self.config.get("use_drag_drop", False))
+        drag_drop_frame = ttk.Frame(frame)
+        drag_drop_frame.pack(anchor='w', padx=10, pady=5)
+        ttk.Checkbutton(drag_drop_frame, text="Use drag & drop (if ViGEmBus fails)", variable=self.use_drag_drop_var, command=self.on_drag_drop_manual_toggle).pack(side='left')
+        dragdrop_info = ttk.Label(drag_drop_frame, text=" (?)", foreground='#888888', cursor='hand2')
+        dragdrop_info.pack(side='left')
+        dragdrop_info.bind('<Button-1>', lambda e: self._show_vigembus_help())
+        self._add_tooltip(dragdrop_info, "Click for ViGEmBus (preferred method) info")
+
+        # Drag timing values (used for drag drop fallback)
         self.drag_wait_after = 300    # ms after drop before Tab close
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
@@ -938,13 +943,114 @@ class QuickDupeApp:
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
+        # ===== KEYDOOR METHOD SECTION =====
+        keydoor_header = ttk.Frame(frame)
+        keydoor_header.pack(pady=(0, 5))
+        ttk.Label(keydoor_header, text="── Keydoor Method ──", style='Header.TLabel').pack(side='left')
+        keydoor_info = ttk.Label(keydoor_header, text=" (?)", foreground='#888888', cursor='hand2')
+        keydoor_info.pack(side='left')
+        self._add_tooltip(keydoor_info, "SETUP: Use default settings and record the key's position in your inventory.\n\nTEST FIRST: Stand AWAY from keydoor, open inventory, press hotkey.\nKey should drop then get picked up instantly when inventory closes.\n\nIF ITEM DOESN'T DROP:\n- Record position again more accurately\n- Install ViGEmBus driver\n- Or enable drag & drop mode and record the drag path\n\nWHEN DOING GLITCH: Always open inventory BEFORE approaching door.")
+
+        # Keydoor Hotkey row
+        hk_frame = ttk.Frame(frame)
+        hk_frame.pack(fill='x', padx=10, pady=5)
+        ttk.Label(hk_frame, text="Hotkey:").pack(side='left')
+        self.dc_hotkey_var = tk.StringVar(value=self.config.get("dc_hotkey", ""))
+        self.dc_hotkey_entry = tk.Entry(hk_frame, textvariable=self.dc_hotkey_var, width=15, state="readonly",
+                                       bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
+        self.dc_hotkey_entry.pack(side='left', padx=5)
+        self.dc_record_btn = ttk.Button(hk_frame, text="Set", width=6, command=self.start_recording_dc)
+        self.dc_record_btn.pack(side='left', padx=5)
+
+        # Keydoor drag record (works for both Xbox X and drag drop)
+        keydoor_drag_frame = ttk.Frame(frame)
+        keydoor_drag_frame.pack(fill='x', padx=10, pady=2)
+        self.keydoor_drag_btn = ttk.Button(keydoor_drag_frame, text="Record", width=12, command=self.start_keydoor_drag_recording)
+        self.keydoor_drag_btn.pack(side='left')
+        self.keydoor_drag_var = tk.StringVar()
+        # Load keydoor drag positions
+        # Separate storage: slot position vs drag path
+        kd_slot = self.config.get("keydoor_slot_pos", [3024, 669])
+        kd_drag_start = self.config.get("keydoor_drag_start", [3024, 669])
+        kd_drag_end = self.config.get("keydoor_drag_end", [550, 1247])
+        self.keydoor_slot_pos = tuple(kd_slot)
+        self.keydoor_drag_start = tuple(kd_drag_start)
+        self.keydoor_drag_end = tuple(kd_drag_end)
+        if self.use_drag_drop_var.get():
+            self.keydoor_drag_var.set(f"({kd_drag_start[0]},{kd_drag_start[1]}) → ({kd_drag_end[0]},{kd_drag_end[1]})")
+        else:
+            self.keydoor_drag_var.set(f"Pos: ({kd_slot[0]},{kd_slot[1]})")
+        ttk.Label(keydoor_drag_frame, textvariable=self.keydoor_drag_var, font=("Consolas", 8)).pack(side='left', padx=5)
+
+        # Keydoor Timings
+        self.create_slider(frame, "X button hold:", "keydoor_x_hold", 1250, 500, 3000, "ms")
+        self.create_slider(frame, "Tab hold:", "keydoor_tab_hold", 21, 10, 200, "ms")
+        self.create_slider(frame, "Wait before E spam:", "keydoor_wait_before_e", 73, 0, 500, "ms")
+        self.create_slider(frame, "E spam count:", "keydoor_espam_count", 30, 5, 100, "")
+        self.create_slider(frame, "E press duration:", "keydoor_e_hold", 13, 5, 100, "ms")
+        self.create_slider(frame, "E spam delay:", "keydoor_e_delay", 12, 5, 100, "ms")
+
+        # Keydoor Reset + Status
+        ttk.Button(frame, text="Reset Keydoor Defaults", command=self.reset_keydoor_defaults).pack(pady=5)
+        self.dc_status_var = tk.StringVar(value="Ready")
+        self.dc_status_label = ttk.Label(frame, textvariable=self.dc_status_var, style='Dim.TLabel')
+        self.dc_status_label.pack(pady=5)
+
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
+
+        # ===== THROWABLE SECTION =====
+        throwable_header = ttk.Frame(frame)
+        throwable_header.pack(pady=(5, 5))
+        ttk.Label(throwable_header, text="── Throwable Dupe ──", style='Header.TLabel').pack(side='left')
+        throwable_info = ttk.Label(throwable_header, text=" (?)", foreground='#888888', cursor='hand2')
+        throwable_info.pack(side='left')
+        self._add_tooltip(throwable_info, "Your character should do 2 pumps, releasing throwable\nitem on 2nd pump. Once that is true, modify 'Delay before DC'\nslightly in either direction until consistent as possible.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.")
+
+        # Throwable Hotkey row
+        throw_hk = ttk.Frame(frame)
+        throw_hk.pack(fill='x', padx=10, pady=5)
+        ttk.Label(throw_hk, text="Hotkey:").pack(side='left')
+        self.throwable_hotkey_var = tk.StringVar(value=self.config.get("throwable_hotkey", ""))
+        self.throwable_hotkey_entry = tk.Entry(throw_hk, textvariable=self.throwable_hotkey_var, width=15, state="readonly",
+                                             bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
+        self.throwable_hotkey_entry.pack(side='left', padx=5)
+        self.throwable_record_btn = ttk.Button(throw_hk, text="Set", width=6, command=self.start_recording_throwable)
+        self.throwable_record_btn.pack(side='left', padx=5)
+
+        # Repeat checkbox
+        self.throwable_repeat_var = tk.BooleanVar(value=self.config.get("throwable_repeat", False))
+        ttk.Checkbutton(frame, text="Auto (loop until pressed again)", variable=self.throwable_repeat_var, command=self.save_settings).pack(anchor='w', padx=10, pady=5)
+
+        # Throwable Timings
+        self.create_slider(frame, "Throw hold time:", "throw_hold_time", 45, 10, 200, "ms")
+        self.create_slider(frame, "Delay before DC:", "throw_dc_delay_before", 40, 0, 200, "ms", bold=True)
+        self.create_slider(frame, "Wait before E:", "throw_wait_before_e", 200, 0, 2000, "ms")
+        self.create_slider(frame, "E hold time:", "throw_e_hold", 50, 10, 500, "ms")
+        # Double E option (for fuel canisters - disarm then pickup)
+        self.throw_double_e_var = tk.BooleanVar(value=self.config.get("throw_double_e", False))
+        ttk.Checkbutton(frame, text="Double E (disarm + pickup)", variable=self.throw_double_e_var, command=self.save_settings).pack(anchor='w', padx=10, pady=2)
+        self.create_slider(frame, "Wait between E:", "throw_e_gap", 200, 50, 1000, "ms")
+        self.create_slider(frame, "2nd E hold:", "throw_e2_hold", 50, 10, 500, "ms")
+        self.create_slider(frame, "Wait after E:", "throw_wait_after_e", 100, 0, 1000, "ms")
+        self.create_slider(frame, "Wait after Q:", "throw_wait_after_q", 750, 0, 2000, "ms")
+        throwable_tip = "Your character should do 2 pumps, releasing throwable item on 2nd pump. Once that is true, modify 'Delay before DC' slightly in either direction until consistent."
+        self.create_slider(frame, "Throws while DC'd:", "throw_dc_count", 12, 1, 30, "", bold=True, tooltip=throwable_tip)
+        self.create_slider(frame, "Time between throws:", "throw_dc_delay", 86, 10, 500, "ms", bold=True, tooltip=throwable_tip)
+
+        ttk.Button(frame, text="Reset Throwable Defaults", command=self.reset_throwable_defaults).pack(pady=5)
+        self.throwable_status_var = tk.StringVar(value="Ready")
+        self.throwable_status_label = ttk.Label(frame, textvariable=self.throwable_status_var, style='Dim.TLabel')
+        self.throwable_status_label.pack(pady=5)
+
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
+
         # ===== TRIGGERNADE SECTION =====
         trig_header = ttk.Frame(frame)
         trig_header.pack(pady=(5, 5))
         ttk.Label(trig_header, text="── Wolfpack/Triggernade Dupe ──", style='Header.TLabel').pack(side='left')
         trig_info = ttk.Label(trig_header, text=" (?)", foreground='#888888', cursor='hand2')
         trig_info.pack(side='left')
-        self._add_tooltip(trig_info, "Record drag path from item slot to ground.\n\nMake sure inventory is full of items you're NOT duping (e.g. stacks of 1 ammo).\nFill safe pockets as well.\n\nQuick use slots must be empty EXCEPT item you're duping in first slot.\nEven utility slots must be empty.\n\nThen press Q to bring out wolfpack/triggernade/leaper pulse unit/other grenade and hit hotkey.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.\n\nTRIGGERNADES: Start with stack of 3 in first quick use slot - if it fails 2x it keeps going.\nTriggernades are unique: when picked up they return to the same stack.")
+        self._add_tooltip(trig_info, "Record position of first quick use slot (or drag path if ViGEmBus not working).\n\nMake sure inventory is full of items you're NOT duping (e.g. stacks of 1 ammo).\nFill safe pockets as well.\n\nQuick use slots must be empty EXCEPT item you're duping in first slot.\nEven utility slots must be empty.\n\nThen press Q to bring out wolfpack/triggernade/leaper pulse unit/other grenade and hit hotkey.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.\n\nTRIGGERNADES: Start with stack of 3 in first quick use slot - if it fails 2x it keeps going.\nTriggernades are unique: when picked up they return to the same stack.")
 
         # Triggernade Hotkey row
         trig_hk = ttk.Frame(frame)
@@ -963,15 +1069,18 @@ class QuickDupeApp:
         self.trig_drag_btn = ttk.Button(trig_drag_frame, text="Record", width=12, command=self.start_trig_drag_recording)
         self.trig_drag_btn.pack(side='left')
         self.trig_drag_var = tk.StringVar()
-        # Load triggernade positions (slot + drop to ground)
+        # Load triggernade drag positions
+        # Separate storage: slot position vs drag path
         trig_slot = self.config.get("trig_slot_pos", [3024, 669])
-        trig_drop = self.config.get("trig_drop_pos", [3024, 750])
+        trig_drag_start = self.config.get("trig_drag_start", [3024, 669])
+        trig_drag_end = self.config.get("trig_drag_end", [550, 1247])
         self.trig_slot_pos = tuple(trig_slot)
-        self.trig_drop_pos = tuple(trig_drop)
-        # Legacy drag positions (kept for compatibility)
-        self.trig_drag_start = tuple(self.config.get("trig_drag_start", [3024, 669]))
-        self.trig_drag_end = tuple(self.config.get("trig_drag_end", [550, 1247]))
-        self.trig_drag_var.set(f"Slot:{trig_slot} Drop:{trig_drop}")
+        self.trig_drag_start = tuple(trig_drag_start)
+        self.trig_drag_end = tuple(trig_drag_end)
+        if self.use_drag_drop_var.get():
+            self.trig_drag_var.set(f"({trig_drag_start[0]},{trig_drag_start[1]}) → ({trig_drag_end[0]},{trig_drag_end[1]})")
+        else:
+            self.trig_drag_var.set(f"Pos: ({trig_slot[0]},{trig_slot[1]})")
         ttk.Label(trig_drag_frame, textvariable=self.trig_drag_var, font=("Consolas", 8)).pack(side='left', padx=5)
 
         # Repeat checkbox
@@ -979,7 +1088,7 @@ class QuickDupeApp:
         ttk.Checkbutton(frame, text="Auto (loop until pressed again)", variable=self.triggernade_repeat_var, command=self.save_settings).pack(anchor='w', padx=10, pady=5)
 
         # Q spam checkbox (optional re-equip between cycles)
-        self.triggernade_q_spam_var = tk.BooleanVar(value=self.config.get("triggernade_q_spam", False))
+        self.triggernade_q_spam_var = tk.BooleanVar(value=self.config.get("triggernade_q_spam", True))
         ttk.Checkbutton(frame, text="Q spam between cycles (re-equip)", variable=self.triggernade_q_spam_var, command=self.save_settings).pack(anchor='w', padx=10, pady=2)
 
         # Triggernade Timings
@@ -1024,68 +1133,19 @@ class QuickDupeApp:
         self.trig_m1_hold_var.trace_add('write', on_cook_var_change)
         ttk.Label(cook_frame, text="ms").pack(side='left')
         self.create_slider(frame, "M2 hold time:", "trig_m2_hold", 51, 10, 500, "ms")
-        self.create_slider(frame, "Drag speed:", "trig_drag_speed", 8, 3, 20, "ms/step")
         self.create_slider(frame, "Delay before DC:", "trig_dc_delay", 10, 0, 200, "ms")
         self.create_slider(frame, "M1s while DC'd:", "trig_dc_throws", 10, 1, 30, "")
         self.create_slider(frame, "Time between M1s:", "trig_throw_delay", 100, 10, 500, "ms")
         self.create_slider(frame, "Reconnect after M1 #:", "trig_reconnect_after", 1, 1, 20, "")
         self.create_slider(frame, "Wait before E spam:", "wait_before_espam", 0, 0, 2000, "ms")
         self.create_slider(frame, "E spam duration:", "espam_duration", 1000, 0, 5000, "ms")
-        self.create_slider(frame, "M1s before E interweave:", "trig_m1_before_interweave", 1, 0, 20, "")
+        self.create_slider(frame, "M1s before E interweave:", "trig_m1_before_interweave", 5, 0, 20, "")
         self.create_slider(frame, "Wait before next cycle:", "wait_before_cycle", 100, 0, 2000, "ms")
 
-        trig_btn_frame = ttk.Frame(frame)
-        trig_btn_frame.pack(pady=5)
-        ttk.Button(trig_btn_frame, text="Reset Defaults", command=self.reset_triggernade_defaults).pack(side='left', padx=2)
-        ttk.Button(trig_btn_frame, text="Export", width=7, command=self.export_triggernade).pack(side='left', padx=2)
-        ttk.Button(trig_btn_frame, text="Import", width=7, command=self.import_triggernade).pack(side='left', padx=2)
+        ttk.Button(frame, text="Reset Triggernade Defaults", command=self.reset_triggernade_defaults).pack(pady=5)
         self.triggernade_status_var = tk.StringVar(value="Ready")
         self.triggernade_status_label = ttk.Label(frame, textvariable=self.triggernade_status_var, style='Dim.TLabel')
         self.triggernade_status_label.pack(pady=5)
-
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
-
-        # ===== QUICK DROP (NO DC) SECTION =====
-        qd_header = ttk.Frame(frame)
-        qd_header.pack(pady=(5, 5))
-        ttk.Label(qd_header, text="── Quick Drop (No DC) ──", style='Header.TLabel').pack(side='left')
-        qd_info = ttk.Label(qd_header, text=" (?)", foreground='#888888', cursor='hand2')
-        qd_info.pack(side='left')
-        self._add_tooltip(qd_info, "Same as triggernade but NO DISCONNECT.\nUses right-click context menu drop instead of drag.\nRight-click on item → Left-click 'Drop to Ground'.\nSuper fast, almost instant.")
-
-        # Quick Drop Hotkey row
-        qd_hk = ttk.Frame(frame)
-        qd_hk.pack(fill='x', padx=10, pady=5)
-        ttk.Label(qd_hk, text="Hotkey:").pack(side='left')
-        self.quickdrop_hotkey_var = tk.StringVar(value=self.config.get("quickdrop_hotkey", ""))
-        self.quickdrop_hotkey_entry = tk.Entry(qd_hk, textvariable=self.quickdrop_hotkey_var, width=15, state="readonly",
-                                         bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
-        self.quickdrop_hotkey_entry.pack(side='left', padx=5)
-        self.quickdrop_record_btn = ttk.Button(qd_hk, text="Set", width=6, command=self.start_recording_quickdrop)
-        self.quickdrop_record_btn.pack(side='left', padx=5)
-
-        # Quick Drop position record
-        qd_pos_frame = ttk.Frame(frame)
-        qd_pos_frame.pack(fill='x', padx=10, pady=2)
-        self.quickdrop_pos_btn = ttk.Button(qd_pos_frame, text="Record Pos", width=12, command=self.start_quickdrop_pos_recording)
-        self.quickdrop_pos_btn.pack(side='left')
-        self.quickdrop_pos_var = tk.StringVar()
-        # Load quick drop positions (right-click pos + left-click drop pos)
-        qd_rclick = self.config.get("quickdrop_rclick_pos", [0, 0])
-        qd_lclick = self.config.get("quickdrop_lclick_pos", [0, 0])
-        self.quickdrop_rclick_pos = tuple(qd_rclick)
-        self.quickdrop_lclick_pos = tuple(qd_lclick)
-        self.quickdrop_pos_var.set(f"R:{qd_rclick} L:{qd_lclick}")
-        ttk.Label(qd_pos_frame, textvariable=self.quickdrop_pos_var, font=("Consolas", 8)).pack(side='left', padx=5)
-
-        # Repeat checkbox
-        self.quickdrop_repeat_var = tk.BooleanVar(value=self.config.get("quickdrop_repeat", False))
-        ttk.Checkbutton(frame, text="Auto (loop until pressed again)", variable=self.quickdrop_repeat_var, command=self.save_settings).pack(anchor='w', padx=10, pady=5)
-
-        # Quick Drop status
-        self.quickdrop_status_var = tk.StringVar(value="Ready")
-        self.quickdrop_status_label = ttk.Label(frame, textvariable=self.quickdrop_status_var, style='Dim.TLabel')
-        self.quickdrop_status_label.pack(pady=5)
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
@@ -1095,7 +1155,7 @@ class QuickDupeApp:
         ttk.Label(mine_header, text="── Mine Dupe ──", style='Header.TLabel').pack(side='left')
         mine_info = ttk.Label(mine_header, text=" (?)", foreground='#888888', cursor='hand2')
         mine_info.pack(side='left')
-        self._add_tooltip(mine_info, "Record drag path from mine slot to ground.\nIf using SURVIVOR AUGMENT: record drag from UTILITY SLOT or it won't work.\n\nCOOK TIME: The use circle should be ALMOST full when inventory opens.\n- If mine deploys before/while opening inventory: reduce cook time\n- Make small adjustments until circle is mostly full on open\n\nDELAY BEFORE DC: Make very light adjustments if still not working.\n\nRECONNECT TO CLICK: If mine drops from inventory but duplicate doesn't place,\nadjust this timing in small increments either direction. Watch for consistency.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.")
+        self._add_tooltip(mine_info, "Record position of mine in inventory (or drag path if ViGEmBus not working).\nIf using SURVIVOR AUGMENT: record position of UTILITY SLOT or it won't work.\n\nCOOK TIME: The use circle should be ALMOST full when inventory opens.\n- If mine deploys before/while opening inventory: reduce cook time\n- Make small adjustments until circle is mostly full on open\n\nDELAY BEFORE DC: Make very light adjustments if still not working.\n\nRECONNECT TO CLICK: If mine drops from inventory but duplicate doesn't place,\nadjust this timing in small increments either direction. Watch for consistency.\n\nTIP: Get it working SINGLE USE first. For auto-repeat, item must roll under your feet\nto be grabbed for looping. Drop piles of 1 of item you're duping around feet as backup copies to grab.")
 
         # Mine Hotkey row
         mine_hk = ttk.Frame(frame)
@@ -1117,15 +1177,17 @@ class QuickDupeApp:
         self.mine_drag_btn = ttk.Button(mine_drag_frame, text="Record", width=12, command=self.start_mine_drag_recording)
         self.mine_drag_btn.pack(side='left')
         self.mine_drag_var = tk.StringVar()
-        # Load mine positions (slot + drop to ground)
-        mine_slot = self.config.get("mine_slot_pos", [3032, 1236])
-        mine_drop = self.config.get("mine_drop_pos", [3171, 1593])
+        # Separate storage: slot position vs drag path
+        mine_slot = self.config.get("mine_slot_pos", [2966, 1196])
+        mine_drag_start = self.config.get("mine_drag_start", [2966, 1196])
+        mine_drag_end = self.config.get("mine_drag_end", [1035, 1291])
         self.mine_slot_pos = tuple(mine_slot)
-        self.mine_drop_pos = tuple(mine_drop)
-        # Legacy drag positions (kept for compatibility)
-        self.mine_drag_start = tuple(self.config.get("mine_drag_start", [3032, 1236]))
-        self.mine_drag_end = tuple(self.config.get("mine_drag_end", [3171, 1593]))
-        self.mine_drag_var.set(f"Slot:{mine_slot} Drop:{mine_drop}")
+        self.mine_drag_start = tuple(mine_drag_start)
+        self.mine_drag_end = tuple(mine_drag_end)
+        if self.use_drag_drop_var.get():
+            self.mine_drag_var.set(f"({mine_drag_start[0]},{mine_drag_start[1]}) → ({mine_drag_end[0]},{mine_drag_end[1]})")
+        else:
+            self.mine_drag_var.set(f"Pos: ({mine_slot[0]},{mine_slot[1]})")
         ttk.Label(mine_drag_frame, textvariable=self.mine_drag_var, font=("Consolas", 8)).pack(side='left', padx=10)
 
         # Mine Timings
@@ -1135,7 +1197,7 @@ class QuickDupeApp:
         mine_cook_frame = ttk.Frame(frame)
         mine_cook_frame.pack(fill='x', padx=10, pady=2)
         ttk.Label(mine_cook_frame, text="Cook time:", width=20, anchor='w', font=("Arial", 9, "bold")).pack(side='left')
-        self.mine_cook_var = tk.IntVar(value=int(self.config.get("mine_cook", 236)))
+        self.mine_cook_var = tk.IntVar(value=int(self.config.get("mine_cook", 1000)))
 
         def on_mine_cook_slide(val):
             self.mine_cook_var.set(int(float(val)))
@@ -1171,92 +1233,17 @@ class QuickDupeApp:
         self.mine_cook_var.trace_add('write', on_mine_cook_var_change)
         ttk.Label(mine_cook_frame, text="ms").pack(side='left')
 
-        # Defaults based on YOUR successful recordings
-        self.create_slider(frame, "Delay before DC:", "mine_dc_delay", 99, 0, 500, "ms", bold=True)
-        self.create_slider(frame, "Drag speed:", "mine_drag_speed", 8, 3, 20, "ms/step")
-        self.create_slider(frame, "Pre-close delay:", "mine_pre_close", 100, 0, 2000, "ms")
-        self.create_slider(frame, "TAB hold (close):", "mine_tab_hold", 80, 20, 300, "ms")
-        self.create_slider(frame, "Close to reconnect:", "mine_close_reconnect", 409, 100, 2000, "ms", bold=True)
-        self.create_slider(frame, "Reconnect to click:", "mine_click_delay", 7, 0, 500, "ms", bold=True)
-        self.create_slider(frame, "Dupe click hold:", "mine_pickup_hold", 1336, 100, 3000, "ms", bold=True)
-        self.create_slider(frame, "Delay before E:", "mine_e_delay", 868, 0, 2000, "ms")
-        self.create_slider(frame, "Delay before loop:", "mine_loop_delay", 550, 0, 2000, "ms")
+        self.create_slider(frame, "Delay before DC:", "mine_dc_delay", 50, 0, 500, "ms", bold=True)
+        self.create_slider(frame, "X hold (drop):", "mine_x_hold", 817, 100, 1500, "ms")
+        self.create_slider(frame, "Reconnect to click:", "mine_click_delay", 50, 0, 500, "ms", bold=True)
+        self.create_slider(frame, "Dupe click hold:", "mine_pickup_hold", 1800, 100, 3000, "ms")
+        self.create_slider(frame, "Delay before E:", "mine_e_delay", 80, 0, 1000, "ms")
+        self.create_slider(frame, "Delay before loop:", "mine_loop_delay", 800, 0, 2000, "ms")
 
-        # Q reselect option
-        reselect_frame = ttk.Frame(frame)
-        reselect_frame.pack(fill='x', padx=10, pady=5)
-        self.mine_reselect_var = tk.BooleanVar(value=self.config.get("mine_reselect", True))
-        ttk.Checkbutton(reselect_frame, text="Q to reselect", variable=self.mine_reselect_var, command=self.save_settings).pack(side='left')
-
-        # Q mode: simple tap or recorded radial
-        default_q_recording = [
-            [1920, 1080], [1920, 1064], [1920, 1046], [1920, 1020], [1920, 982],
-            [1920, 949], [1922, 914], [1925, 884], [1928, 852], [1922, 1058],
-            [1926, 1035], [1927, 1012], [1930, 993], [1922, 1065], [1924, 1049]
-        ]
-        self.mine_q_mode_var = tk.StringVar(value=self.config.get("mine_q_mode", "radial"))
-        ttk.Radiobutton(reselect_frame, text="Simple tap", variable=self.mine_q_mode_var, value="simple", command=self.save_settings).pack(side='left', padx=(10, 5))
-        ttk.Radiobutton(reselect_frame, text="Radial:", variable=self.mine_q_mode_var, value="radial", command=self.save_settings).pack(side='left')
-
-        # Direction picker button - opens compass popup
-        self.mine_q_direction_var = tk.StringVar(value=self.config.get("mine_q_direction", "S"))
-        self.mine_q_dir_btn = ttk.Button(reselect_frame, text=self.mine_q_direction_var.get(), width=3,
-                                         command=self._show_direction_picker)
-        self.mine_q_dir_btn.pack(side='left', padx=2)
-
-        # Mouse nudge option (move mouse between loops)
-        nudge_frame = ttk.Frame(frame)
-        nudge_frame.pack(fill='x', padx=10, pady=5)
-        self.mine_nudge_var = tk.BooleanVar(value=self.config.get("mine_nudge", True))
-        ttk.Checkbutton(nudge_frame, text="Nudge mouse", variable=self.mine_nudge_var, command=self.save_settings).pack(side='left')
-        self.mine_nudge_px_var = tk.IntVar(value=self.config.get("mine_nudge_px", 50))
-        nudge_entry = tk.Entry(nudge_frame, textvariable=self.mine_nudge_px_var, width=5, justify='center',
-                               bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0')
-        nudge_entry.pack(side='left', padx=5)
-        nudge_entry.bind('<Return>', lambda e: self.save_settings())
-        nudge_entry.bind('<FocusOut>', lambda e: self.save_settings())
-        ttk.Label(nudge_frame, text="px right per loop").pack(side='left')
-
-        mine_btn_frame = ttk.Frame(frame)
-        mine_btn_frame.pack(pady=5)
-        ttk.Button(mine_btn_frame, text="Reset Defaults", command=self.reset_mine_defaults).pack(side='left', padx=2)
-        ttk.Button(mine_btn_frame, text="Export", width=7, command=self.export_mine).pack(side='left', padx=2)
-        ttk.Button(mine_btn_frame, text="Import", width=7, command=self.import_mine).pack(side='left', padx=2)
+        ttk.Button(frame, text="Reset Mine Defaults", command=self.reset_mine_defaults).pack(pady=5)
         self.mine_status_var = tk.StringVar(value="Ready")
         self.mine_status_label = ttk.Label(frame, textvariable=self.mine_status_var, style='Dim.TLabel')
         self.mine_status_label.pack(pady=5)
-
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
-
-        # ===== RECONNECT MACRO SECTION =====
-        reconnect_header = ttk.Frame(frame)
-        reconnect_header.pack(pady=(5, 5))
-        ttk.Label(reconnect_header, text="── Reconnect Macro ──", style='Header.TLabel').pack(side='left')
-        reconnect_info = ttk.Label(reconnect_header, text=" (?)", foreground='#888888', cursor='hand2')
-        reconnect_info.pack(side='left')
-        self._add_tooltip(reconnect_info, "Record and playback custom reconnect sequence.\nENTER to start, F12 to stop recording.")
-
-        # Hotkey row
-        reconnect_hk_frame = ttk.Frame(frame)
-        reconnect_hk_frame.pack(fill='x', padx=10, pady=5)
-        ttk.Label(reconnect_hk_frame, text="Hotkey:").pack(side='left')
-        self.reconnect_hotkey_var = tk.StringVar(value=self.config.get("reconnect_hotkey", ""))
-        self.reconnect_hotkey_entry = tk.Entry(reconnect_hk_frame, textvariable=self.reconnect_hotkey_var, width=15, state="readonly",
-                                               bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
-        self.reconnect_hotkey_entry.pack(side='left', padx=5)
-        self.reconnect_hk_btn = ttk.Button(reconnect_hk_frame, text="Set", width=6, command=self.start_recording_reconnect_hotkey)
-        self.reconnect_hk_btn.pack(side='left', padx=5)
-
-        reconnect_btn_frame = ttk.Frame(frame)
-        reconnect_btn_frame.pack(pady=5)
-        self.reconnect_record_btn = ttk.Button(reconnect_btn_frame, text="Record", width=10, command=self.start_reconnect_recording)
-        self.reconnect_record_btn.pack(side='left', padx=2)
-        self.reconnect_play_btn = ttk.Button(reconnect_btn_frame, text="Play", width=10, command=self.play_reconnect_macro)
-        self.reconnect_play_btn.pack(side='left', padx=2)
-
-        self.reconnect_status_var = tk.StringVar(value="No recording")
-        self.reconnect_status_label = ttk.Label(frame, textvariable=self.reconnect_status_var, style='Dim.TLabel')
-        self.reconnect_status_label.pack(pady=5)
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
@@ -1283,12 +1270,76 @@ class QuickDupeApp:
         ttk.Checkbutton(frame, text="Hold to activate (vs toggle)", variable=self.espam_hold_mode_var,
                         command=self.save_settings).pack(anchor='w', padx=10, pady=2)
 
-        # Time between E spam bursts (in ms)
-        self.create_slider(frame, "Time before repeat:", "espam_repeat_delay", 0, 0, 5000, "ms")
+        # Seconds before repeat slider (0-10, default 0)
+        self.create_slider(frame, "Seconds before repeat:", "espam_repeat_delay", 0, 0, 10, "s")
 
         self.espam_status_var = tk.StringVar(value="Ready")
         self.espam_status_label = ttk.Label(frame, textvariable=self.espam_status_var, style='Dim.TLabel')
         self.espam_status_label.pack(pady=5)
+
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
+
+        # ===== UNTITLED METHOD #1 SECTION =====
+        um1_header = ttk.Frame(frame)
+        um1_header.pack(pady=(5, 5))
+        ttk.Label(um1_header, text="── Ammo ──", style='Header.TLabel').pack(side='left')
+        um1_info = ttk.Label(um1_header, text=" (?)", foreground='#888888', cursor='hand2')
+        um1_info.pack(side='left')
+        self._add_tooltip(um1_info, "TAB→RightClick→DC→Drop→Grab→Reconnect→Complete→TAB→Equip")
+
+        # Hotkey row
+        um1_hk = ttk.Frame(frame)
+        um1_hk.pack(fill='x', padx=10, pady=5)
+        ttk.Label(um1_hk, text="Hotkey:").pack(side='left')
+        self.untitled1_hotkey_var = tk.StringVar(value=self.config.get("untitled1_hotkey", ""))
+        self.untitled1_hotkey_entry = tk.Entry(um1_hk, textvariable=self.untitled1_hotkey_var, width=15, state="readonly",
+                                               bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
+        self.untitled1_hotkey_entry.pack(side='left', padx=5)
+        self.untitled1_record_btn = ttk.Button(um1_hk, text="Set", width=6, command=self.start_recording_untitled1)
+        self.untitled1_record_btn.pack(side='left', padx=5)
+
+        # Position recording - single guided sequence
+        um1_pos_frame = ttk.Frame(frame)
+        um1_pos_frame.pack(fill='x', padx=10, pady=2)
+
+        # Load saved positions
+        self.um1_item_pos = tuple(self.config.get("um1_item_pos", [1777, 975]))
+        self.um1_context_pos = tuple(self.config.get("um1_context_pos", [1928, 1389]))
+        self.um1_drag_start = tuple(self.config.get("um1_drag_start", [1693, 990]))
+        self.um1_drag_end = tuple(self.config.get("um1_drag_end", [2268, 1150]))
+
+        self.um1_record_seq_btn = ttk.Button(um1_pos_frame, text="Record Sequence", width=16, command=self._start_um1_sequence_recording)
+        self.um1_record_seq_btn.pack(side='left', padx=2)
+        ttk.Label(um1_pos_frame, text="(Right-click → Left-click → Drag)", font=("Arial", 8), foreground='#888888').pack(side='left', padx=5)
+
+        self.um1_pos_var = tk.StringVar()
+        self._update_um1_pos_display()
+        ttk.Label(frame, textvariable=self.um1_pos_var, font=("Consolas", 7)).pack(anchor='w', padx=10)
+
+        # Repeat checkbox
+        self.untitled1_repeat_var = tk.BooleanVar(value=self.config.get("untitled1_repeat", True))
+        ttk.Checkbutton(frame, text="Auto (loop until pressed again)", variable=self.untitled1_repeat_var, command=self.save_settings).pack(anchor='w', padx=10, pady=2)
+
+        # Timing sliders
+        self.create_slider(frame, "TAB hold:", "um1_tab_hold", 110, 30, 300, "ms")
+        self.create_slider(frame, "After TAB open:", "um1_after_tab_open", 200, 50, 1000, "ms")
+        self.create_slider(frame, "Right click hold:", "um1_rclick_hold", 140, 30, 300, "ms")
+        self.create_slider(frame, "After right click:", "um1_after_rclick", 200, 50, 1000, "ms")
+        self.create_slider(frame, "After DC:", "um1_after_dc", 100, 20, 1000, "ms")
+        self.create_slider(frame, "Context click hold:", "um1_context_hold", 150, 30, 500, "ms")
+        self.create_slider(frame, "After context click:", "um1_after_context", 300, 50, 2000, "ms")
+        self.create_slider(frame, "After reconnect:", "um1_after_reconnect", 300, 50, 2000, "ms")
+        self.create_slider(frame, "Dbl click hold:", "um1_dblclick_hold", 40, 20, 150, "ms")
+        self.create_slider(frame, "Dbl click gap:", "um1_dblclick_gap", 30, 15, 100, "ms")
+        self.create_slider(frame, "After dbl click:", "um1_after_dblclick", 100, 30, 500, "ms")
+        self.create_slider(frame, "After TAB close:", "um1_after_tab_close", 150, 50, 500, "ms")
+        self.create_slider(frame, "Equip key hold:", "um1_equip_hold", 150, 30, 300, "ms")
+        self.create_slider(frame, "Loop delay:", "um1_loop_delay", 500, 0, 3000, "ms")
+
+        ttk.Button(frame, text="Reset Ammo Defaults", command=self.reset_untitled1_defaults).pack(pady=5)
+        self.untitled1_status_var = tk.StringVar(value="Ready")
+        self.untitled1_status_label = ttk.Label(frame, textvariable=self.untitled1_status_var, style='Dim.TLabel')
+        self.untitled1_status_label.pack(pady=5)
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
@@ -1321,26 +1372,11 @@ class QuickDupeApp:
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=10, pady=10)
 
-        # ===== GLOBAL EXPORT/IMPORT =====
-        ttk.Label(frame, text="── All Settings ──", style='Header.TLabel').pack(pady=(5, 5))
-        global_btn_frame = ttk.Frame(frame)
-        global_btn_frame.pack(pady=5)
-        ttk.Button(global_btn_frame, text="Export All", width=10, command=self.export_all_settings).pack(side='left', padx=2)
-        ttk.Button(global_btn_frame, text="Import All", width=10, command=self.import_all_settings).pack(side='left', padx=2)
-
         # ===== RESET ALL =====
-        ttk.Button(frame, text="Reset ALL Settings", command=self.reset_all_settings).pack(pady=5)
+        ttk.Button(frame, text="⚠ Reset ALL Settings", command=self.reset_all_settings).pack(pady=5)
 
-        # ===== STOP ALL HOTKEY =====
-        stop_frame = ttk.Frame(frame)
-        stop_frame.pack(fill='x', padx=10, pady=(15, 5))
-        ttk.Label(stop_frame, text="Stop All:").pack(side='left')
-        self.stop_hotkey_var = tk.StringVar(value=self.config.get("stop_hotkey", "esc"))
-        self.stop_hotkey_entry = tk.Entry(stop_frame, textvariable=self.stop_hotkey_var, width=15, state="readonly",
-                                          bd=0, highlightthickness=0, bg='#2d2d2d', fg='#e0e0e0', readonlybackground='#2d2d2d')
-        self.stop_hotkey_entry.pack(side='left', padx=5)
-        self.stop_record_btn = ttk.Button(stop_frame, text="Set", width=6, command=self.start_recording_stop)
-        self.stop_record_btn.pack(side='left', padx=5)
+        # ===== FOOTER =====
+        ttk.Label(frame, text="Press ESC to stop all macros", style='Dim.TLabel').pack(pady=(20, 10))
 
         # ===== RESIZE GRIP (bottom of window) =====
         resize_grip = tk.Frame(self.root, bg='#2d2d2d', height=8, cursor='sb_v_double_arrow')
@@ -1358,6 +1394,8 @@ class QuickDupeApp:
         resize_grip.bind('<Button-1>', start_resize)
         resize_grip.bind('<B1-Motion>', do_resize)
 
+        # Set initial button text based on drag drop mode
+        self._update_record_button_text()
 
     def create_slider(self, parent, label, config_key, default, min_val, max_val, unit, bold=False, tooltip=None):
         """Create a slider row with label, slider, and editable value entry"""
@@ -1426,8 +1464,9 @@ class QuickDupeApp:
             ttk.Label(row, text=unit).pack(side='left')
 
     def start_recording_mine(self):
-        self._recording_previous_value = self.mine_hotkey_var.get()
         self.recording_mine = True
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_dc_both = False
@@ -1439,522 +1478,73 @@ class QuickDupeApp:
         self.mine_record_btn.config(text="...")
         self.mine_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-
-    def _show_direction_picker(self):
-        """Show radial compass popup with hover detection using images"""
-        import math
-        from PIL import Image, ImageTk
-
-        # Create dark overlay over app
-        overlay = tk.Toplevel(self.root)
-        overlay.overrideredirect(True)
-        overlay.configure(bg='black')
-        overlay.attributes('-alpha', 0.7)  # Semi-transparent
-        overlay.geometry(f"{self.root.winfo_width()}x{self.root.winfo_height()}+{self.root.winfo_x()}+{self.root.winfo_y()}")
-
-        # Create popup for direction picker
-        popup = tk.Toplevel(self.root)
-        popup.title("Select Direction")
-        popup.overrideredirect(True)
-        popup.configure(bg='black')
-        popup.attributes('-transparentcolor', 'black')  # Make black corners transparent
-        popup.attributes('-topmost', True)
-
-        # Load direction images (handle PyInstaller bundle)
-        if getattr(sys, 'frozen', False):
-            script_dir = sys._MEIPASS
-        else:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-
-        img_files = {
-            "NONE": "NONE.png", "N": "N.png", "NE": "NE.png",
-            "E": "E.png", "SE": "SE.png", "S": "S.png", "SW": "SW.png"
-        }
-        images = {}
-        scale = 1.1  # Scale up 10%
-        for name, filename in img_files.items():
-            path = os.path.join(script_dir, filename)
-            if os.path.exists(path):
-                img = Image.open(path)
-                # Scale up by 10%
-                new_size = (int(img.width * scale), int(img.height * scale))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                images[name] = ImageTk.PhotoImage(img)
-
-        if not images or "NONE" not in images:
-            popup.destroy()
-            return
-
-        # Get image size
-        img_width = images["NONE"].width()
-        img_height = images["NONE"].height()
-        center_x = img_width // 2
-        center_y = img_height // 2
-
-        # Title label above canvas
-        title_label = tk.Label(popup, text="Select Slot", bg='white', fg='black', font=('Arial', 12, 'bold'), padx=10, pady=5)
-        title_label.pack(pady=(5, 10))
-
-        # Create canvas
-        canvas = tk.Canvas(popup, width=img_width, height=img_height, bg='black', highlightthickness=0)
-        canvas.pack()
-        canvas.create_image(0, 0, anchor='nw', image=images["NONE"], tags="radial")
-        # White circle border (3px)
-        canvas.create_oval(1, 1, img_width - 1, img_height - 1, outline='white', width=3, tags="border")
-        # Show current selection in center (3px up from center)
-        selected = self.mine_q_direction_var.get()
-        canvas.create_text(center_x - 3, center_y - 3, text=selected, fill='black', font=('Arial', 10, 'bold'), tags="dirtext")
-
-        # Store reference to prevent garbage collection
-        popup.images = images
-        current_dir = [None]
-
-        def angle_to_direction(angle):
-            """Convert angle (degrees, 0=right, counter-clockwise) to direction"""
-            # Calibrated: N=67-113, NE=22-70, E=wraps 0, SE=290-338, S=247-295, SW=206-253
-            # Ring: inner=92, outer=151
-            angle = angle % 360
-            if 68 <= angle < 113:       # N
-                return "N"
-            elif 22 <= angle < 68:      # NE
-                return "NE"
-            elif angle < 22 or angle >= 338:  # E (wraps around 0)
-                return "E"
-            elif 292 <= angle < 338:    # SE
-                return "SE"
-            elif 250 <= angle < 292:    # S
-                return "S"
-            elif 206 <= angle < 250:    # SW
-                return "SW"
-            # 113-206 is NW/W territory - not selectable
-            return None
-
-        def on_mouse_move(event):
-            dx = event.x - center_x
-            dy = center_y - event.y  # Flip Y for standard math coords
-            dist = math.sqrt(dx*dx + dy*dy)
-
-            # Only detect in the ring area (not too close to center, not outside)
-            if dist < 101 or dist > 166:  # Scaled 10% (92*1.1, 151*1.1)
-                new_dir = None
-            else:
-                angle = math.degrees(math.atan2(dy, dx))
-                if angle < 0:
-                    angle += 360
-                new_dir = angle_to_direction(angle)
-
-            if new_dir != current_dir[0]:
-                current_dir[0] = new_dir
-                img_key = new_dir if new_dir and new_dir in images else "NONE"
-                canvas.delete("radial")
-                canvas.create_image(0, 0, anchor='nw', image=images[img_key], tags="radial")
-                # Redraw border on top
-                canvas.delete("border")
-                canvas.create_oval(1, 1, img_width - 1, img_height - 1, outline='white', width=3, tags="border")
-                # Update center text
-                canvas.delete("dirtext")
-                display_text = new_dir if new_dir else self.mine_q_direction_var.get()
-                canvas.create_text(center_x - 3, center_y - 3, text=display_text, fill='black', font=('Arial', 10, 'bold'), tags="dirtext")
-
-        def close_picker():
-            overlay.destroy()
-            popup.destroy()
-
-        def on_click(event):
-            if current_dir[0]:
-                self.mine_q_direction_var.set(current_dir[0])
-                self.mine_q_dir_btn.config(text=current_dir[0])
-                self.save_settings()
-            close_picker()
-
-        def on_leave(event):
-            # Reset to NONE when mouse leaves canvas
-            if current_dir[0] is not None:
-                current_dir[0] = None
-                canvas.delete("radial")
-                canvas.create_image(0, 0, anchor='nw', image=images["NONE"], tags="radial")
-                canvas.delete("border")
-                canvas.create_oval(1, 1, img_width - 1, img_height - 1, outline='white', width=3, tags="border")
-                canvas.delete("dirtext")
-                canvas.create_text(center_x - 3, center_y - 3, text=self.mine_q_direction_var.get(), fill='black', font=('Arial', 10, 'bold'), tags="dirtext")
-
-        canvas.bind('<Motion>', on_mouse_move)
-        canvas.bind('<Leave>', on_leave)
-        canvas.bind('<Button-1>', on_click)
-        popup.bind('<Button-1>', on_click)  # Click anywhere on popup closes
-        overlay.bind('<Button-1>', lambda e: close_picker())  # Click overlay closes
-        popup.bind('<Escape>', lambda e: close_picker())
-
-        # Position centered over app window
-        popup.update_idletasks()
-        app_x = self.root.winfo_x()
-        app_y = self.root.winfo_y()
-        app_w = self.root.winfo_width()
-        app_h = self.root.winfo_height()
-        x = app_x + (app_w - img_width) // 2
-        y = app_y + (app_h - img_height) // 2 - 60  # Move up 60px
-        popup.geometry(f"+{x}+{y}")
-        popup.focus_set()
-
-    def _play_mine_q_radial(self):
-        """Play Q radial selection using compass direction"""
-        # Direction to delta mapping (distance of 300 pixels)
-        # W and NW not available in game
-        dist = 300
-        direction_deltas = {
-            "N":  (0, -dist),
-            "NE": (dist, -dist),
-            "E":  (dist, 0),
-            "SE": (dist, dist),
-            "S":  (0, dist),
-            "SW": (-dist, dist),
-        }
-
-        direction = self.mine_q_direction_var.get()
-        dx, dy = direction_deltas.get(direction, (0, dist))  # Default to South
-
-        print(f"[Q RADIAL] Direction: {direction}, delta: ({dx}, {dy})")
-
-        # Press Q and wait for radial to open
-        pynput_keyboard.press('q')
-        time.sleep(0.3)
-
-        # Move in steps for natural feel
-        steps = 10
-        for i in range(steps):
-            pynput_mouse.move(dx // steps, dy // steps)
-            time.sleep(0.015)
-
-        time.sleep(0.1)
-        pynput_keyboard.release('q')
-        print(f"[Q RADIAL] Done - selected {direction}")
-
-    def start_reconnect_recording(self):
-        """Record all clicks and key presses with positions"""
-        from pynput import mouse, keyboard as kb
-
-        self.reconnect_record_btn.config(text="Press ENTER...")
-        self.reconnect_status_var.set("Press ENTER to start recording")
-        self.show_overlay("Press ENTER to START", force=True)
-
-        self._reconnect_recording = []
-        self._reconnect_recording_active = False
-        self._keys_held = set()  # Track held keys to avoid repeat spam
-
-        def on_click(x, y, button, pressed):
-            if not self._reconnect_recording_active:
-                return
-            btn_name = str(button).replace('Button.', '')
-            event = {'type': 'click', 'x': x, 'y': y, 'button': btn_name, 'down': pressed}
-            self._reconnect_recording.append(event)
-            action = "down" if pressed else "up"
-            print(f"[RECONNECT REC] {btn_name} {action} at ({x}, {y})")
-
-        def on_key_press(key):
-            # ENTER toggles recording
-            if key == kb.Key.enter:
-                if not self._reconnect_recording_active:
-                    self._reconnect_recording_active = True
-                    self._keys_held.clear()
-                    self.root.after(0, lambda: self.reconnect_record_btn.config(text="Recording..."))
-                    self.root.after(0, lambda: self.reconnect_status_var.set("Recording... ENTER to stop"))
-                    self.root.after(0, lambda: self.show_overlay("Recording... ENTER to stop", force=True))
-                else:
-                    mouse_listener.stop()
-                    keyboard_listener.stop()
-                    self._reconnect_recording_active = False
-                    self._save_reconnect_recording()
-                    return False
-                return
-
-            if not self._reconnect_recording_active:
-                return
-
-            # Get key name
-            try:
-                key_name = key.char if hasattr(key, 'char') and key.char else str(key).replace('Key.', '')
-            except:
-                key_name = str(key).replace('Key.', '')
-
-            # Skip if key already held (avoid repeat spam)
-            if key_name in self._keys_held:
-                return
-            self._keys_held.add(key_name)
-
-            event = {'type': 'key', 'key': key_name, 'down': True}
-            self._reconnect_recording.append(event)
-            print(f"[RECONNECT REC] key {key_name} down")
-
-        def on_key_release(key):
-            if not self._reconnect_recording_active:
-                return
-            if key == kb.Key.enter:
-                return  # Don't record ENTER release
-
-            try:
-                key_name = key.char if hasattr(key, 'char') and key.char else str(key).replace('Key.', '')
-            except:
-                key_name = str(key).replace('Key.', '')
-
-            # Remove from held keys
-            self._keys_held.discard(key_name)
-
-            event = {'type': 'key', 'key': key_name, 'down': False}
-            self._reconnect_recording.append(event)
-            print(f"[RECONNECT REC] key {key_name} up")
-
-        mouse_listener = mouse.Listener(on_click=on_click)
-        keyboard_listener = kb.Listener(on_press=on_key_press, on_release=on_key_release)
-        mouse_listener.start()
-        keyboard_listener.start()
-
-    def _save_reconnect_recording(self):
-        """Save the reconnect recording to file"""
-        import json
-
-        if len(self._reconnect_recording) < 2:
-            self.reconnect_status_var.set("Recording too short")
-            self.reconnect_record_btn.config(text="Record")
-            self.show_overlay("Recording cancelled - too short", force=True)
-            return
-
-        # Save to file
-        save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reconnect_macro.json")
-        with open(save_path, 'w') as f:
-            json.dump(self._reconnect_recording, f, indent=2)
-
-        num_events = len(self._reconnect_recording)
-        self.reconnect_status_var.set(f"Recorded: {num_events} events")
-        self.reconnect_record_btn.config(text="Record")
-        self.show_overlay(f"Saved {num_events} events", force=True)
-        print(f"[RECONNECT REC] Saved {num_events} events to {save_path}")
-
-    def play_reconnect_macro(self):
-        """Play back the recorded reconnect macro"""
-        import json
-
-        # Default reconnect macro
-        default_recording = [
-            {"type": "key", "key": "tab", "down": True},
-            {"type": "key", "key": "tab", "down": False},
-            {"type": "click", "x": 195, "y": 1266, "button": "left", "down": True},
-            {"type": "click", "x": 195, "y": 1266, "button": "left", "down": False},
-            {"type": "key", "key": "shift", "down": True},
-            {"type": "click", "x": 411, "y": 660, "button": "left", "down": True},
-            {"type": "click", "x": 412, "y": 660, "button": "left", "down": False},
-            {"type": "key", "key": "shift", "down": False},
-            {"type": "key", "key": "esc", "down": True},
-            {"type": "key", "key": "esc", "down": False},
-            {"type": "key", "key": "esc", "down": True},
-            {"type": "key", "key": "esc", "down": False},
-            {"type": "click", "x": 491, "y": 1304, "button": "left", "down": True},
-            {"type": "click", "x": 491, "y": 1304, "button": "left", "down": False},
-            {"type": "click", "x": 3168, "y": 69, "button": "left", "down": True},
-            {"type": "click", "x": 3169, "y": 66, "button": "left", "down": False},
-            {"type": "click", "x": 584, "y": 957, "button": "left", "down": True},
-            {"type": "click", "x": 584, "y": 957, "button": "left", "down": False},
-        ]
-
-        # Try to load custom recording, fall back to default
-        save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reconnect_macro.json")
-        if os.path.exists(save_path):
-            with open(save_path, 'r') as f:
-                recording = json.load(f)
-            if not recording:
-                recording = default_recording
-        else:
-            recording = default_recording
-
-        self.reconnect_play_btn.config(text="Playing...")
-        self.reconnect_status_var.set("Playing macro...")
-
-        def playback():
-            from pynput.mouse import Button
-            from pynput.keyboard import Key
-
-            button_map = {
-                'left': Button.left,
-                'right': Button.right,
-                'middle': Button.middle,
-            }
-
-            def smooth_move(target_x, target_y, steps=20):
-                """Fast smooth mouse movement with random curve each time"""
-                import random
-                import math
-                current = pynput_mouse.position
-                start_x, start_y = current[0], current[1]
-
-                # Random curve: perpendicular offset that varies each move
-                dx = target_x - start_x
-                dy = target_y - start_y
-                dist = math.sqrt(dx*dx + dy*dy)
-                if dist < 1:
-                    return
-
-                # Perpendicular direction (normalized)
-                perp_x = -dy / dist
-                perp_y = dx / dist
-
-                # Random curve magnitude: -15 to +15 pixels at peak, changes each time
-                curve_amount = random.uniform(-15, 15)
-
-                for i in range(1, steps + 1):
-                    progress = i / steps
-                    # Base position along the line
-                    base_x = start_x + dx * progress
-                    base_y = start_y + dy * progress
-
-                    # Arc offset: sine curve peaks in middle
-                    arc = math.sin(progress * math.pi) * curve_amount
-                    arc_x = perp_x * arc
-                    arc_y = perp_y * arc
-
-                    # Small jitter on top
-                    jitter_x = random.uniform(-2, 2)
-                    jitter_y = random.uniform(-2, 2)
-
-                    # Last step always hits exact target
-                    if i == steps:
-                        pynput_mouse.position = (target_x, target_y)
-                    else:
-                        pynput_mouse.position = (int(base_x + arc_x + jitter_x), int(base_y + arc_y + jitter_y))
-
-                    time.sleep(0.003)  # 3ms per step = 60ms total
-
-            for event in recording:
-                if event['type'] == 'click':
-                    x, y = event['x'], event['y']
-                    button = button_map.get(event['button'], Button.left)
-                    smooth_move(x, y)
-                    time.sleep(0.05)  # 50ms after move
-                    if event['down']:
-                        pynput_mouse.press(button)
-                        time.sleep(0.03)  # 30ms after press
-                    else:
-                        pynput_mouse.release(button)
-                        time.sleep(0.15)  # 150ms after release - let game register
-                    print(f"[RECONNECT PLAY] {event['button']} {'down' if event['down'] else 'up'} at ({x}, {y})")
-
-                elif event['type'] == 'key':
-                    key_name = event['key']
-                    is_press = event['down']
-                    # Handle special keys (shift, ctrl, etc.)
-                    special_keys = {
-                        'shift': Key.shift, 'shift_l': Key.shift_l, 'shift_r': Key.shift_r,
-                        'ctrl': Key.ctrl, 'ctrl_l': Key.ctrl_l, 'ctrl_r': Key.ctrl_r,
-                        'alt': Key.alt, 'alt_l': Key.alt_l, 'alt_r': Key.alt_r,
-                        'space': Key.space, 'enter': Key.enter, 'tab': Key.tab,
-                        'backspace': Key.backspace, 'delete': Key.delete,
-                        'esc': Key.esc, 'escape': Key.esc,
-                        'up': Key.up, 'down': Key.down, 'left': Key.left, 'right': Key.right,
-                        'home': Key.home, 'end': Key.end, 'page_up': Key.page_up, 'page_down': Key.page_down,
-                        'caps_lock': Key.caps_lock, 'num_lock': Key.num_lock,
-                    }
-                    key_lower = key_name.lower()
-                    if key_lower in special_keys:
-                        key = special_keys[key_lower]
-                        if is_press:
-                            pynput_keyboard.press(key)
-                            time.sleep(0.03)  # 30ms after press
-                        else:
-                            pynput_keyboard.release(key)
-                            # Longer delay after certain key releases
-                            if key_lower in ('tab', 'esc', 'escape'):
-                                time.sleep(0.3)  # 300ms for menu transitions
-                            elif key_lower in ('shift', 'shift_l', 'shift_r'):
-                                time.sleep(0.4)  # 400ms after shift - item transfer needs time
-                            else:
-                                time.sleep(0.1)  # 100ms after other key releases
-                    elif len(key_name) == 1:
-                        if is_press:
-                            pynput_keyboard.press(key_name)
-                            time.sleep(0.03)
-                        else:
-                            pynput_keyboard.release(key_name)
-                            time.sleep(0.1)
-                    action = "down" if is_press else "up"
-                    print(f"[RECONNECT PLAY] key {key_name} {action}")
-
-            self.root.after(0, lambda: self.reconnect_play_btn.config(text="Play"))
-            self.root.after(0, lambda: self.reconnect_status_var.set("Playback complete"))
-            self.root.after(0, lambda: self.show_overlay("Macro complete", force=True))
-
-        threading.Thread(target=playback, daemon=True).start()
+        self.root.focus_set()
 
     def start_mine_drag_recording(self):
-        """Record mine drag path - drag item to ground"""
+        """Record mine drag path or slot position based on drag drop setting"""
+        if self.use_drag_drop_var.get():
+            self.show_overlay("10 sec - then click & drag item to drop zone")
+            self._mine_drag_countdown(10, is_drag=True)
+        else:
+            self.show_overlay("10 sec - then click inventory slot")
+            self._mine_drag_countdown(10, is_drag=False)
+
+    def _mine_drag_countdown(self, seconds_left, is_drag=True):
+        if seconds_left > 0:
+            self.show_overlay(f"Get ready... {seconds_left}")
+            self.root.after(1000, lambda: self._mine_drag_countdown(seconds_left - 1, is_drag))
+        else:
+            self._start_mine_drag_listener(is_drag)
+
+    def _start_mine_drag_listener(self, is_drag=True):
         from pynput import mouse
 
-        self.mine_drag_btn.config(text="Recording...")
-        self.show_overlay("DRAG item to ground", force=True)
-        self._mine_drag_started = False
-        self._mine_drag_start_time = None
+        if is_drag:
+            self.show_overlay("DRAG NOW!")
+            drag_start_pos = [None, None]
 
-        def on_click(x, y, button, pressed):
-            if button != mouse.Button.left:
-                return
-
-            if pressed:
-                self._mine_drag_start_temp = (x, y)
-                self._mine_drag_start_time = time.time()
-                self._mine_drag_started = True
-                self.root.after(0, lambda: self.show_overlay("Now RELEASE...", force=True))
-            elif self._mine_drag_started:
-                # Validate drag: >20ms hold and >50px distance
-                duration_ms = (time.time() - self._mine_drag_start_time) * 1000
-                dx = x - self._mine_drag_start_temp[0]
-                dy = y - self._mine_drag_start_temp[1]
-                distance = (dx*dx + dy*dy) ** 0.5
-
-                if duration_ms < 20 or distance < 50:
-                    # Not a valid drag, reset
-                    self._mine_drag_started = False
-                    self.root.after(0, lambda: self.show_overlay("DRAG item to ground", force=True))
+            def on_click(x, y, button, pressed):
+                if button != mouse.Button.left:
                     return
+                if pressed:
+                    drag_start_pos[0] = x
+                    drag_start_pos[1] = y
+                    self.show_overlay(f"Start: ({x},{y}) - Release to set end...")
+                else:
+                    if drag_start_pos[0] is not None:
+                        start = (drag_start_pos[0], drag_start_pos[1])
+                        end = (x, y)
+                        self.mine_drag_start = start
+                        self.mine_drag_end = end
+                        self.config["mine_drag_start"] = list(start)
+                        self.config["mine_drag_end"] = list(end)
+                        self.mine_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
+                        save_config(self.config)
+                        self.show_overlay(f"Saved! {start} → {end}")
+                        print(f"[MINE DRAG] Recorded: {start} → {end}")
+                        return False
+        else:
+            self.show_overlay("CLICK SLOT NOW!")
 
-                self.mine_drag_start = self._mine_drag_start_temp
-                self.mine_drag_end = (x, y)
-                self.config["mine_drag_start"] = list(self.mine_drag_start)
-                self.config["mine_drag_end"] = list(self.mine_drag_end)
-                save_config(self.config)
-                self.mine_drag_var.set(f"{self.mine_drag_start} → {self.mine_drag_end}")
-                self.root.after(0, lambda: self.mine_drag_btn.config(text="Record"))
-                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
-                print(f"[MINE] Drag: {self.mine_drag_start} → {self.mine_drag_end}")
-                # Clean up ESC hook on successful recording
-                if esc_hook_ref[0]:
-                    try:
-                        keyboard.unhook(esc_hook_ref[0])
-                    except:
-                        pass
-                return False  # Stop listener
+            def on_click(x, y, button, pressed):
+                if button != mouse.Button.left:
+                    return
+                if pressed:
+                    self.mine_slot_pos = (x, y)
+                    self.config["mine_slot_pos"] = [x, y]
+                    self.mine_drag_var.set(f"Pos: ({x},{y})")
+                    save_config(self.config)
+                    self.show_overlay(f"Saved slot: ({x},{y})")
+                    print(f"[MINE SLOT] Recorded: ({x},{y})")
+                    return False
 
-        listener_ref = [None]
-        esc_hook_ref = [None]
-        listener_ref[0] = mouse.Listener(on_click=on_click)
-        listener_ref[0].start()
-
-        # ESC to cancel and stop all macros
-        def on_esc():
-            self._mine_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
-            self.root.after(0, lambda: self.mine_drag_btn.config(text="Record"))
-            self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
-            self.stop_all_macros()
-            if esc_hook_ref[0]:
-                try:
-                    keyboard.unhook(esc_hook_ref[0])
-                except:
-                    pass
-
-        esc_hook_ref[0] = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
+        listener = mouse.Listener(on_click=on_click)
+        listener.start()
 
     def start_recording_espam(self):
-        self._recording_previous_value = self.espam_hotkey_var.get()
         self.recording_espam = True
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_mine = False
         self.recording_dc_both = False
@@ -1966,12 +1556,12 @@ class QuickDupeApp:
         self.espam_record_btn.config(text="...")
         self.espam_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_triggernade(self):
-        self._recording_previous_value = self.triggernade_hotkey_var.get()
         self.recording_triggernade = True
-        self.recording_quickdrop = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_espam = False
         self.recording_mine = False
         self.recording_dc_both = False
@@ -1983,60 +1573,7 @@ class QuickDupeApp:
         self.triggernade_record_btn.config(text="...")
         self.triggernade_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-
-    def start_recording_quickdrop(self):
-        self._recording_previous_value = self.quickdrop_hotkey_var.get()
-        self.recording_quickdrop = True
-        self.recording_triggernade = False
-        self.recording_espam = False
-        self.recording_mine = False
-        self.recording_dc_both = False
-        self.recording_dc_outbound = False
-        self.recording_dc_inbound = False
-        self.recording_tamper = False
-        self.recording_minimize = False
-        self.recording_tray = False
-        self.quickdrop_record_btn.config(text="...")
-        self.quickdrop_hotkey_var.set("Press key...")
-        self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-
-    def start_quickdrop_pos_recording(self):
-        """Record quick drop positions - right-click starts, left-click captures drop position"""
-        from pynput import mouse
-
-        self.quickdrop_pos_btn.config(text="Right-click...")
-        self.show_overlay("RIGHT-CLICK on item", force=True)
-        self._quickdrop_rclick_pos = None
-
-        def on_click(x, y, button, pressed):
-            if not pressed:
-                return  # Only care about press, not release
-
-            if button == mouse.Button.right and self._quickdrop_rclick_pos is None:
-                # First: right-click position
-                self._quickdrop_rclick_pos = (x, y)
-                self.root.after(0, lambda: self.quickdrop_pos_btn.config(text="Left-click..."))
-                self.root.after(0, lambda: self.show_overlay("LEFT-CLICK 'Drop to Ground'", force=True))
-                print(f"[QUICKDROP] Right-click at {x}, {y}")
-
-            elif button == mouse.Button.left and self._quickdrop_rclick_pos is not None:
-                # Second: left-click position (drop to ground)
-                self.quickdrop_rclick_pos = self._quickdrop_rclick_pos
-                self.quickdrop_lclick_pos = (x, y)
-                self.config["quickdrop_rclick_pos"] = list(self.quickdrop_rclick_pos)
-                self.config["quickdrop_lclick_pos"] = list(self.quickdrop_lclick_pos)
-                save_config(self.config)
-                self.quickdrop_pos_var.set(f"R:{list(self.quickdrop_rclick_pos)} L:{list(self.quickdrop_lclick_pos)}")
-                self.root.after(0, lambda: self.quickdrop_pos_btn.config(text="Record Pos"))
-                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
-                print(f"[QUICKDROP] Left-click at {x}, {y}")
-                print(f"[QUICKDROP] Positions: R:{self.quickdrop_rclick_pos} L:{self.quickdrop_lclick_pos}")
-                return False  # Stop listener
-
-        listener = mouse.Listener(on_click=on_click)
-        listener.start()
+        self.root.focus_set()
 
     def start_drag_recording(self):
         """Start recording drag coordinates - 10 sec countdown, then waits for mouse down/up"""
@@ -2050,25 +1587,6 @@ class QuickDupeApp:
         # Start countdown
         self._drag_countdown(10)
 
-    def start_recording_reconnect_hotkey(self):
-        """Start recording hotkey for reconnect macro"""
-        self._recording_previous_value = self.reconnect_hotkey_var.get()
-        self.recording_reconnect = True
-        self.recording_triggernade = False
-        self.recording_espam = False
-        self.recording_mine = False
-        self.recording_dc_both = False
-        self.recording_dc_outbound = False
-        self.recording_dc_inbound = False
-        self.recording_tamper = False
-        self.recording_minimize = False
-        self.recording_tray = False
-        self.recording_stop = False
-        self.reconnect_hk_btn.config(text="...")
-        self.reconnect_hotkey_var.set("Press key...")
-        self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-
     def _drag_countdown(self, seconds_left):
         """Countdown before starting drag recording"""
         if not self.recording_drag:
@@ -2076,7 +1594,7 @@ class QuickDupeApp:
 
         if seconds_left > 0:
             self.drag_record_btn.config(text=f"{seconds_left}...")
-            self.show_overlay(f"Drag recording in {seconds_left}...", force=True)
+            self.show_overlay(f"Drag recording in {seconds_left}...")
             self.root.after(1000, lambda: self._drag_countdown(seconds_left - 1))
         else:
             # Countdown done - start listening
@@ -2088,7 +1606,7 @@ class QuickDupeApp:
 
         self.drag_record_btn.config(text="DRAG NOW")
         self.drag_label_var.set("Click and drag item!")
-        self.show_overlay("DRAG NOW!", force=True)
+        self.show_overlay("DRAG NOW!")
 
         drag_start_pos = [None, None]
 
@@ -2101,7 +1619,7 @@ class QuickDupeApp:
                 drag_start_pos[0] = x
                 drag_start_pos[1] = y
                 self.root.after(0, lambda: self.drag_label_var.set(f"Start: ({x},{y}) - Release..."))
-                self.root.after(0, lambda: self.show_overlay(f"Start: ({x},{y}) - Release...", force=True))
+                self.root.after(0, lambda: self.show_overlay(f"Start: ({x},{y}) - Release..."))
             else:
                 # Mouse up - record end position and stop
                 if drag_start_pos[0] is not None:
@@ -2120,7 +1638,7 @@ class QuickDupeApp:
                     save_config(self.config)
 
                     print(f"[DRAG] Recorded: {self.drag_start} → {self.drag_end}")
-                    self.root.after(0, lambda: self.show_overlay(f"Drag saved!", force=True))
+                    self.root.after(0, lambda: self.show_overlay(f"Drag saved!"))
 
                     self.recording_drag = False
                     return False  # Stop listener
@@ -2133,19 +1651,12 @@ class QuickDupeApp:
         """Listen for drag and record start/end positions only"""
         from pynput import mouse
 
-        if self._drag_recording_cancelled:
-            return
-
-        self.show_overlay("Click & drag NOW!", force=True)
+        self.show_overlay("Click & drag item to drop zone NOW!")
 
         state = {'start_pos': None}
         listener_ref = [None]
-        esc_hook_ref = [None]
 
         def on_click(x, y, button, pressed):
-            if self._drag_recording_cancelled:
-                return False  # Stop listener
-
             if button != mouse.Button.left:
                 return
 
@@ -2154,121 +1665,55 @@ class QuickDupeApp:
 
             if pressed:
                 state['start_pos'] = (x, y)
-                self.show_overlay(f"Dragging from ({x},{y})...", force=True)
+                self.show_overlay(f"Dragging from ({x},{y})...")
             else:
                 if state['start_pos']:
                     start = state['start_pos']
                     end = (x, y)
 
-                    self.trig_drag_start = start
-                    self.trig_drag_end = end
-                    self.config["trig_drag_start"] = list(start)
-                    self.config["trig_drag_end"] = list(end)
-                    self.trig_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
-                    print(f"[TRIG DRAG] Recorded: {start} → {end}")
+                    if target == 'keydoor':
+                        self.keydoor_drag_start = start
+                        self.keydoor_drag_end = end
+                        self.config["keydoor_drag_start"] = list(start)
+                        self.config["keydoor_drag_end"] = list(end)
+                        self.keydoor_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
+                        print(f"[KEYDOOR DRAG] Recorded: {start} → {end}")
+                    else:
+                        self.trig_drag_start = start
+                        self.trig_drag_end = end
+                        self.config["trig_drag_start"] = list(start)
+                        self.config["trig_drag_end"] = list(end)
+                        self.trig_drag_var.set(f"({start[0]},{start[1]}) → ({end[0]},{end[1]})")
+                        print(f"[TRIG DRAG] Recorded: {start} → {end}")
 
                     save_config(self.config)
-                    self.show_overlay(f"Saved! {start} → {end}", force=True)
-                    # Clean up ESC hook on successful recording
-                    if esc_hook_ref[0]:
-                        try:
-                            keyboard.unhook(esc_hook_ref[0])
-                        except:
-                            pass
+                    self.show_overlay(f"Saved! {start} → {end}")
                     return False  # Stop listener
 
         listener_ref[0] = mouse.Listener(on_click=on_click)
         listener_ref[0].start()
 
-        # ESC to cancel and stop all macros
-        def on_esc():
-            self._drag_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
-            self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
-            self.stop_all_macros()
-            if esc_hook_ref[0]:
-                try:
-                    keyboard.unhook(esc_hook_ref[0])
-                except:
-                    pass
-
-        esc_hook_ref[0] = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
+    def start_keydoor_drag_recording(self):
+        """Record keydoor position or drag path depending on mode"""
+        if self.use_drag_drop_var.get():
+            self.show_overlay("10 sec - then click & drag item to drop zone")
+            self._drag_countdown(10, 'keydoor', record_drag=True)
+        else:
+            self.show_overlay("10 sec - then click on item position")
+            self._drag_countdown(10, 'keydoor', record_drag=False)
 
     def start_trig_drag_recording(self):
-        """Record triggernade drag path - drag item to ground"""
-        from pynput import mouse
-
-        self.trig_drag_btn.config(text="Recording...")
-        self.show_overlay("DRAG item to ground", force=True)
-        self._trig_drag_started = False
-        self._trig_drag_start_time = None
-
-        def on_click(x, y, button, pressed):
-            if button != mouse.Button.left:
-                return
-
-            if pressed:
-                self._trig_drag_start_temp = (x, y)
-                self._trig_drag_start_time = time.time()
-                self._trig_drag_started = True
-                self.root.after(0, lambda: self.show_overlay("Now RELEASE...", force=True))
-            elif self._trig_drag_started:
-                # Validate drag: >20ms hold and >50px distance
-                duration_ms = (time.time() - self._trig_drag_start_time) * 1000
-                dx = x - self._trig_drag_start_temp[0]
-                dy = y - self._trig_drag_start_temp[1]
-                distance = (dx*dx + dy*dy) ** 0.5
-
-                if duration_ms < 20 or distance < 50:
-                    # Not a valid drag, reset
-                    self._trig_drag_started = False
-                    self.root.after(0, lambda: self.show_overlay("DRAG item to ground", force=True))
-                    return
-
-                self.trig_drag_start = self._trig_drag_start_temp
-                self.trig_drag_end = (x, y)
-                self.config["trig_drag_start"] = list(self.trig_drag_start)
-                self.config["trig_drag_end"] = list(self.trig_drag_end)
-                save_config(self.config)
-                self.trig_drag_var.set(f"{self.trig_drag_start} → {self.trig_drag_end}")
-                self.root.after(0, lambda: self.trig_drag_btn.config(text="Record"))
-                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
-                print(f"[TRIG] Drag: {self.trig_drag_start} → {self.trig_drag_end}")
-                # Clean up ESC hook on successful recording
-                if esc_hook_ref[0]:
-                    try:
-                        keyboard.unhook(esc_hook_ref[0])
-                    except:
-                        pass
-                return False  # Stop listener
-
-        listener_ref = [None]
-        esc_hook_ref = [None]
-        listener_ref[0] = mouse.Listener(on_click=on_click)
-        listener_ref[0].start()
-
-        # ESC to cancel and stop all macros
-        def on_esc():
-            self._drag_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
-            self.root.after(0, lambda: self.trig_drag_btn.config(text="Record"))
-            self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
-            self.stop_all_macros()
-            if esc_hook_ref[0]:
-                try:
-                    keyboard.unhook(esc_hook_ref[0])
-                except:
-                    pass
-
-        esc_hook_ref[0] = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
+        """Record triggernade position or drag path depending on mode"""
+        if self.use_drag_drop_var.get():
+            self.show_overlay("10 sec - then click & drag item to drop zone")
+            self._drag_countdown(10, 'triggernade', record_drag=True)
+        else:
+            self.show_overlay("10 sec - then click on item position")
+            self._drag_countdown(10, 'triggernade', record_drag=False)
 
     def _drag_countdown(self, seconds_left, target, record_drag=True):
-        if self._drag_recording_cancelled:
-            return  # Cancelled
         if seconds_left > 0:
-            self.show_overlay(f"Get ready... {seconds_left}", force=True)
+            self.show_overlay(f"Get ready... {seconds_left}")
             self.root.after(1000, lambda: self._drag_countdown(seconds_left - 1, target, record_drag))
         else:
             if record_drag:
@@ -2277,60 +1722,39 @@ class QuickDupeApp:
                 self._start_position_listener(target)
 
     def _start_position_listener(self, target):
-        """Listen for single click to record position"""
+        """Listen for single click to record position (for ViGEmBus mode)"""
         from pynput import mouse
 
-        if self._drag_recording_cancelled:
-            return
-
-        self.show_overlay("Click position NOW!", force=True)
+        self.show_overlay("Click on item position NOW!")
 
         listener_ref = [None]
-        esc_hook_ref = [None]
 
         def on_click(x, y, button, pressed):
-            if self._drag_recording_cancelled:
-                return False  # Stop listener
-
             if button != mouse.Button.left:
                 return
             if not pressed:  # On release
                 x, y = int(x), int(y)
                 pos = (x, y)
 
-                self.trig_slot_pos = pos
-                self.config["trig_slot_pos"] = list(pos)
-                self.trig_drag_var.set(f"Pos: ({x}, {y})")
-                print(f"[TRIG POS] Recorded: {pos}")
+                if target == 'keydoor':
+                    self.keydoor_slot_pos = pos
+                    self.config["keydoor_slot_pos"] = list(pos)
+                    self.keydoor_drag_var.set(f"Pos: ({x}, {y})")
+                    print(f"[KEYDOOR POS] Recorded: {pos}")
+                else:
+                    self.trig_slot_pos = pos
+                    self.config["trig_slot_pos"] = list(pos)
+                    self.trig_drag_var.set(f"Pos: ({x}, {y})")
+                    print(f"[TRIG POS] Recorded: {pos}")
 
                 save_config(self.config)
                 print(f"[CONFIG] Saved to: {CONFIG_FILE}")
-                self.show_overlay(f"Position saved: ({x}, {y})", force=True)
-                # Clean up ESC hook on successful recording
-                if esc_hook_ref[0]:
-                    try:
-                        keyboard.unhook(esc_hook_ref[0])
-                    except:
-                        pass
+                print(f"[CONFIG] keydoor_slot_pos = {self.config.get('keydoor_slot_pos')}")
+                self.show_overlay(f"Position saved: ({x}, {y})")
                 return False  # Stop listener
 
         listener_ref[0] = mouse.Listener(on_click=on_click)
         listener_ref[0].start()
-
-        # ESC to cancel and stop all macros
-        def on_esc():
-            self._drag_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
-            self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
-            self.stop_all_macros()
-            if esc_hook_ref[0]:
-                try:
-                    keyboard.unhook(esc_hook_ref[0])
-                except:
-                    pass
-
-        esc_hook_ref[0] = keyboard.on_press_key('esc', lambda e: on_esc(), suppress=False)
 
     def start_slot_recording(self):
         """Record drop position - click where the item slot is"""
@@ -2340,7 +1764,7 @@ class QuickDupeApp:
     def _slot_countdown(self, seconds_left):
         if seconds_left > 0:
             self.slot_record_btn.config(text=f"{seconds_left}...")
-            self.show_overlay(f"Click slot in {seconds_left}...", force=True)
+            self.show_overlay(f"Click slot in {seconds_left}...")
             self.root.after(1000, lambda: self._slot_countdown(seconds_left - 1))
         else:
             self._start_slot_listener()
@@ -2350,7 +1774,7 @@ class QuickDupeApp:
         from pynput import mouse
 
         self.slot_record_btn.config(text="CLICK!")
-        self.show_overlay("CLICK ON SLOT!", force=True)
+        self.show_overlay("CLICK ON SLOT!")
 
         def on_click(x, y, button, pressed):
             if button == mouse.Button.left and pressed:
@@ -2362,18 +1786,70 @@ class QuickDupeApp:
 
                 self.root.after(0, lambda: self.slot_pos_var.set(f"({x}, {y})"))
                 self.root.after(0, lambda: self.slot_record_btn.config(text="Record"))
-                self.root.after(0, lambda: self.show_overlay(f"Position: ({x}, {y})", force=True))
+                self.root.after(0, lambda: self.show_overlay(f"Position: ({x}, {y})"))
                 print(f"[SLOT] Recorded drop position: ({x}, {y})")
                 return False  # Stop listener
 
         listener = mouse.Listener(on_click=on_click)
         listener.start()
 
-    def start_recording_stop(self):
-        """Start recording hotkey for Stop All"""
-        print("[DEBUG] start_recording_stop() called")
-        self._recording_previous_value = self.stop_hotkey_var.get()
-        self.recording_stop = True
+    def _update_um1_pos_display(self):
+        """Update the Ammo position display"""
+        self.um1_pos_var.set(f"Item:{self.um1_item_pos} Context:{self.um1_context_pos} Drag:{self.um1_drag_start}→{self.um1_drag_end}")
+
+    def _start_um1_sequence_recording(self):
+        """Start guided sequence recording for Ammo"""
+        from pynput import mouse
+
+        self.um1_record_seq_btn.config(text="Recording...")
+        self.show_overlay("Step 1: RIGHT-CLICK on item")
+        self._um1_record_step = 1
+        self._um1_drag_started = False  # Track if drag press was captured
+
+        def on_click(x, y, button, pressed):
+            if self._um1_record_step == 1:
+                # Step 1: Right click on item
+                if pressed and button == mouse.Button.right:
+                    self.um1_item_pos = (x, y)
+                    self.config["um1_item_pos"] = [x, y]
+                    self._um1_record_step = 2
+                    self.root.after(0, lambda: self.show_overlay("Step 2: LEFT-CLICK context menu"))
+
+            elif self._um1_record_step == 2:
+                # Step 2: Left click on context menu (only capture press, ignore release)
+                if pressed and button == mouse.Button.left:
+                    self.um1_context_pos = (x, y)
+                    self.config["um1_context_pos"] = [x, y]
+                    self._um1_record_step = 3
+                    self._um1_drag_started = False  # Reset - need a NEW press for drag
+                    self.root.after(0, lambda: self.show_overlay("Step 3: DRAG item to slot"))
+
+            elif self._um1_record_step == 3:
+                # Step 3: Drag - capture start on press, end on release
+                # Only process if it's a NEW click (not the release from step 2)
+                if button == mouse.Button.left:
+                    if pressed:
+                        self.um1_drag_start = (x, y)
+                        self.config["um1_drag_start"] = [x, y]
+                        self._um1_drag_started = True  # Mark that we got a drag press
+                        self.root.after(0, lambda: self.show_overlay("Now RELEASE to end drag"))
+                    elif self._um1_drag_started:  # Only end if we captured a drag start
+                        self.um1_drag_end = (x, y)
+                        self.config["um1_drag_end"] = [x, y]
+                        save_config(self.config)
+                        self.root.after(0, self._update_um1_pos_display)
+                        self.root.after(0, lambda: self.um1_record_seq_btn.config(text="Record Sequence"))
+                        self.root.after(0, lambda: self.show_overlay("Sequence recorded!"))
+                        return False  # Stop listener
+
+        listener = mouse.Listener(on_click=on_click)
+        listener.start()
+
+    def start_recording_untitled1(self):
+        """Start recording hotkey for Ammo"""
+        self.recording_untitled1 = True
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
@@ -2383,16 +1859,45 @@ class QuickDupeApp:
         self.recording_tamper = False
         self.recording_minimize = False
         self.recording_tray = False
-        self.stop_record_btn.config(text="...")
-        self.stop_hotkey_var.set("Press key...")
+        self.untitled1_record_btn.config(text="...")
+        self.untitled1_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
-        print(f"[DEBUG] recording_stop={self.recording_stop}, bound KeyPress, focus forced")
+        self.root.focus_set()
+
+    def start_recording_dc(self):
+        self.recording_dc = True
+        self.recording_throwable = False
+        self.recording_triggernade = False
+        self.recording_espam = False
+        self.recording_dc_both = False
+        self.recording_dc_outbound = False
+        self.recording_dc_inbound = False
+        self.recording_tamper = False
+        self.recording_minimize = False
+        self.recording_tray = False
+        self.dc_record_btn.config(text="...")
+        self.dc_hotkey_var.set("Press key...")
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.focus_set()
+
+    def start_recording_throwable(self):
+        self.recording_throwable = True
+        self.recording_dc = False
+        self.recording_triggernade = False
+        self.recording_espam = False
+        self.recording_dc_both = False
+        self.recording_dc_outbound = False
+        self.recording_dc_inbound = False
+        self.recording_tamper = False
+        self.recording_minimize = False
+        self.recording_tray = False
+        self.throwable_record_btn.config(text="...")
+        self.throwable_hotkey_var.set("Press key...")
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.focus_set()
 
     def on_key_press(self, event):
-        print(f"[DEBUG] on_key_press called: key={event.keysym}, recording_stop={self.recording_stop}")
-        if not self.recording_triggernade and not self.recording_quickdrop and not self.recording_mine and not self.recording_espam and not self.recording_dc_both and not self.recording_dc_outbound and not self.recording_dc_inbound and not self.recording_tamper and not self.recording_minimize and not self.recording_tray and not self.recording_stop and not getattr(self, 'recording_reconnect', False):
-            print("[DEBUG] on_key_press: early return - no recording flags set")
+        if not self.recording_dc and not self.recording_throwable and not self.recording_triggernade and not self.recording_mine and not self.recording_espam and not self.recording_dc_both and not self.recording_dc_outbound and not self.recording_dc_inbound and not self.recording_tamper and not self.recording_minimize and not self.recording_tray and not self.recording_untitled1:
             return
 
         # Use keyboard library to check modifiers (tkinter state flags are unreliable)
@@ -2458,14 +1963,18 @@ class QuickDupeApp:
 
         # ESC clears the hotkey
         if key == 'esc':
-            if self.recording_triggernade:
+            if self.recording_dc:
+                self.dc_hotkey_var.set("")
+                self.dc_record_btn.config(text="Set")
+                self.recording_dc = False
+            elif self.recording_throwable:
+                self.throwable_hotkey_var.set("")
+                self.throwable_record_btn.config(text="Set")
+                self.recording_throwable = False
+            elif self.recording_triggernade:
                 self.triggernade_hotkey_var.set("")
                 self.triggernade_record_btn.config(text="Set")
                 self.recording_triggernade = False
-            elif self.recording_quickdrop:
-                self.quickdrop_hotkey_var.set("")
-                self.quickdrop_record_btn.config(text="Set")
-                self.recording_quickdrop = False
             elif self.recording_mine:
                 self.mine_hotkey_var.set("")
                 self.mine_record_btn.config(text="Set")
@@ -2474,10 +1983,10 @@ class QuickDupeApp:
                 self.espam_hotkey_var.set("")
                 self.espam_record_btn.config(text="Set")
                 self.recording_espam = False
-            elif self.recording_stop:
-                self.stop_hotkey_var.set("")
-                self.stop_record_btn.config(text="Set")
-                self.recording_stop = False
+            elif self.recording_untitled1:
+                self.untitled1_hotkey_var.set("")
+                self.untitled1_record_btn.config(text="Set")
+                self.recording_untitled1 = False
             elif self.recording_dc_both:
                 self.dc_both_hotkey_var.set("")
                 self.dc_both_record_btn.config(text="Set")
@@ -2502,12 +2011,7 @@ class QuickDupeApp:
                 self.tray_hotkey_var.set("")
                 self.tray_record_btn.config(text="Set")
                 self.recording_tray = False
-            elif getattr(self, 'recording_reconnect', False):
-                self.reconnect_hotkey_var.set("")
-                self.reconnect_hk_btn.config(text="Set")
-                self.recording_reconnect = False
             self.root.unbind("<KeyPress>")
-            self.root.update_idletasks()  # Force GUI refresh
             self.save_settings()
             self.register_hotkeys()
             return
@@ -2519,31 +2023,34 @@ class QuickDupeApp:
 
             # Clear this hotkey from any other action first
             all_hotkey_vars = [
+                self.dc_hotkey_var,
+                self.throwable_hotkey_var,
                 self.triggernade_hotkey_var,
-                self.quickdrop_hotkey_var,
                 self.mine_hotkey_var,
                 self.espam_hotkey_var,
-                self.stop_hotkey_var,
                 self.dc_both_hotkey_var,
                 self.dc_outbound_hotkey_var,
                 self.dc_inbound_hotkey_var,
                 self.tamper_hotkey_var,
                 self.minimize_hotkey_var,
                 self.tray_hotkey_var,
-                self.reconnect_hotkey_var,
             ]
             for var in all_hotkey_vars:
                 if var.get() == hotkey:
                     var.set("")
 
-            if self.recording_triggernade:
+            if self.recording_dc:
+                self.dc_hotkey_var.set(hotkey)
+                self.dc_record_btn.config(text="Set")
+                self.recording_dc = False
+            elif self.recording_throwable:
+                self.throwable_hotkey_var.set(hotkey)
+                self.throwable_record_btn.config(text="Set")
+                self.recording_throwable = False
+            elif self.recording_triggernade:
                 self.triggernade_hotkey_var.set(hotkey)
                 self.triggernade_record_btn.config(text="Set")
                 self.recording_triggernade = False
-            elif self.recording_quickdrop:
-                self.quickdrop_hotkey_var.set(hotkey)
-                self.quickdrop_record_btn.config(text="Set")
-                self.recording_quickdrop = False
             elif self.recording_mine:
                 self.mine_hotkey_var.set(hotkey)
                 self.mine_record_btn.config(text="Set")
@@ -2552,10 +2059,10 @@ class QuickDupeApp:
                 self.espam_hotkey_var.set(hotkey)
                 self.espam_record_btn.config(text="Set")
                 self.recording_espam = False
-            elif self.recording_stop:
-                self.stop_hotkey_var.set(hotkey)
-                self.stop_record_btn.config(text="Set")
-                self.recording_stop = False
+            elif self.recording_untitled1:
+                self.untitled1_hotkey_var.set(hotkey)
+                self.untitled1_record_btn.config(text="Set")
+                self.recording_untitled1 = False
             elif self.recording_dc_both:
                 self.dc_both_hotkey_var.set(hotkey)
                 self.dc_both_record_btn.config(text="Set")
@@ -2580,12 +2087,7 @@ class QuickDupeApp:
                 self.tray_hotkey_var.set(hotkey)
                 self.tray_record_btn.config(text="Set")
                 self.recording_tray = False
-            elif getattr(self, 'recording_reconnect', False):
-                self.reconnect_hotkey_var.set(hotkey)
-                self.reconnect_hk_btn.config(text="Set")
-                self.recording_reconnect = False
             self.root.unbind("<KeyPress>")
-            self.root.update_idletasks()  # Force GUI refresh
             self.save_settings()
             self.register_hotkeys()
 
@@ -2656,11 +2158,12 @@ class QuickDupeApp:
 
     def start_recording_dc_both(self):
         """Start recording hotkey for DC both"""
-        self._recording_previous_value = self.dc_both_hotkey_var.get()
         self.recording_dc_both = True
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
@@ -2669,15 +2172,16 @@ class QuickDupeApp:
         self.dc_both_record_btn.config(text="...")
         self.dc_both_hotkey_var.set("...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_dc_outbound(self):
         """Start recording hotkey for DC outbound"""
-        self._recording_previous_value = self.dc_outbound_hotkey_var.get()
         self.recording_dc_outbound = True
         self.recording_dc_both = False
         self.recording_dc_inbound = False
         self.recording_tamper = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
@@ -2686,15 +2190,16 @@ class QuickDupeApp:
         self.dc_outbound_record_btn.config(text="...")
         self.dc_outbound_hotkey_var.set("...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_dc_inbound(self):
         """Start recording hotkey for DC inbound"""
-        self._recording_previous_value = self.dc_inbound_hotkey_var.get()
         self.recording_dc_inbound = True
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_tamper = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
@@ -2703,15 +2208,16 @@ class QuickDupeApp:
         self.dc_inbound_record_btn.config(text="...")
         self.dc_inbound_hotkey_var.set("...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_tamper(self):
         """Start recording hotkey for Tamper"""
-        self._recording_previous_value = self.tamper_hotkey_var.get()
         self.recording_tamper = True
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
@@ -2720,13 +2226,14 @@ class QuickDupeApp:
         self.tamper_record_btn.config(text="...")
         self.tamper_hotkey_var.set("...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_minimize(self):
         """Start recording hotkey for minimize window"""
-        self._recording_previous_value = self.minimize_hotkey_var.get()
         self.recording_minimize = True
         self.recording_tray = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_dc_both = False
@@ -2737,13 +2244,14 @@ class QuickDupeApp:
         self.minimize_record_btn.config(text="...")
         self.minimize_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
 
     def start_recording_tray(self):
         """Start recording hotkey for minimize to tray"""
-        self._recording_previous_value = self.tray_hotkey_var.get()
         self.recording_tray = True
         self.recording_minimize = False
+        self.recording_dc = False
+        self.recording_throwable = False
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_dc_both = False
@@ -2754,18 +2262,72 @@ class QuickDupeApp:
         self.tray_record_btn.config(text="...")
         self.tray_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.focus_force()
+        self.root.focus_set()
+
+    def on_drag_drop_manual_toggle(self):
+        """User manually toggled drag drop - remember their preference and update button text"""
+        self.config["drag_drop_user_set"] = True  # User explicitly set this
+        self._update_record_button_text()
+        self.save_settings()
+
+    def _update_record_button_text(self):
+        """Update record button text and position displays based on drag drop mode"""
+        use_drag = self.use_drag_drop_var.get()
+
+        # Update keydoor display
+        if use_drag:
+            self.keydoor_drag_var.set(f"({self.keydoor_drag_start[0]},{self.keydoor_drag_start[1]}) → ({self.keydoor_drag_end[0]},{self.keydoor_drag_end[1]})")
+        else:
+            self.keydoor_drag_var.set(f"Pos: ({self.keydoor_slot_pos[0]},{self.keydoor_slot_pos[1]})")
+
+        # Update triggernade display
+        if use_drag:
+            self.trig_drag_var.set(f"({self.trig_drag_start[0]},{self.trig_drag_start[1]}) → ({self.trig_drag_end[0]},{self.trig_drag_end[1]})")
+        else:
+            self.trig_drag_var.set(f"Pos: ({self.trig_slot_pos[0]},{self.trig_slot_pos[1]})")
+
+        # Update mine display
+        if use_drag:
+            self.mine_drag_var.set(f"({self.mine_drag_start[0]},{self.mine_drag_start[1]}) → ({self.mine_drag_end[0]},{self.mine_drag_end[1]})")
+        else:
+            self.mine_drag_var.set(f"Pos: ({self.mine_slot_pos[0]},{self.mine_slot_pos[1]})")
+
+    def auto_enable_drag_drop_if_no_vigembus(self):
+        """Auto-enable drag drop if ViGEmBus failed, but only if user hasn't manually set preference"""
+        if not self.config.get("drag_drop_user_set", False):
+            # User hasn't manually set it, so auto-enable
+            self.use_drag_drop_var.set(True)
+            self.config["use_drag_drop"] = True
+            save_config(self.config)
+            print("[VIGEMBUS] Auto-enabled drag drop fallback")
 
     def save_settings(self):
+        # Keydoor settings
+        self.config["dc_hotkey"] = self.dc_hotkey_var.get()
+        self.config["keydoor_x_hold"] = self.keydoor_x_hold_var.get()
+        self.config["keydoor_tab_hold"] = self.keydoor_tab_hold_var.get()
+        self.config["keydoor_wait_before_e"] = self.keydoor_wait_before_e_var.get()
+        self.config["keydoor_espam_count"] = self.keydoor_espam_count_var.get()
+        self.config["keydoor_e_hold"] = self.keydoor_e_hold_var.get()
+        self.config["keydoor_e_delay"] = self.keydoor_e_delay_var.get()
+        # Throwable settings
+        self.config["throwable_hotkey"] = self.throwable_hotkey_var.get()
+        self.config["throwable_repeat"] = self.throwable_repeat_var.get()
+        self.config["throw_hold_time"] = self.throw_hold_time_var.get()
+        self.config["throw_dc_delay_before"] = self.throw_dc_delay_before_var.get()
+        self.config["throw_wait_before_e"] = self.throw_wait_before_e_var.get()
+        self.config["throw_e_hold"] = self.throw_e_hold_var.get()
+        self.config["throw_double_e"] = self.throw_double_e_var.get()
+        self.config["throw_e_gap"] = self.throw_e_gap_var.get()
+        self.config["throw_e2_hold"] = self.throw_e2_hold_var.get()
+        self.config["throw_wait_after_e"] = self.throw_wait_after_e_var.get()
+        self.config["throw_wait_after_q"] = self.throw_wait_after_q_var.get()
+        self.config["throw_dc_count"] = self.throw_dc_count_var.get()
+        self.config["throw_dc_delay"] = self.throw_dc_delay_var.get()
         # Triggernade settings
         self.config["triggernade_hotkey"] = self.triggernade_hotkey_var.get()
         self.config["triggernade_repeat"] = self.triggernade_repeat_var.get()
         self.config["triggernade_q_spam"] = self.triggernade_q_spam_var.get()
-        # Quick Drop settings
-        self.config["quickdrop_hotkey"] = self.quickdrop_hotkey_var.get()
-        self.config["quickdrop_repeat"] = self.quickdrop_repeat_var.get()
-        self.config["quickdrop_rclick_pos"] = list(self.quickdrop_rclick_pos)
-        self.config["quickdrop_lclick_pos"] = list(self.quickdrop_lclick_pos)
         self.config["espam_hotkey"] = self.espam_hotkey_var.get()
         self.config["wait_before_espam"] = self.wait_before_espam_var.get()
         self.config["espam_duration"] = self.espam_duration_var.get()
@@ -2781,18 +2343,17 @@ class QuickDupeApp:
         self.config["mine_repeat"] = self.mine_repeat_var.get()
         self.config["mine_cook"] = self.mine_cook_var.get()
         self.config["mine_dc_delay"] = self.mine_dc_delay_var.get()
+        self.config["mine_x_hold"] = self.mine_x_hold_var.get()
         self.config["mine_click_delay"] = self.mine_click_delay_var.get()
         self.config["mine_pickup_hold"] = self.mine_pickup_hold_var.get()
         self.config["mine_e_delay"] = self.mine_e_delay_var.get()
         self.config["mine_loop_delay"] = self.mine_loop_delay_var.get()
-        self.config["mine_reselect"] = self.mine_reselect_var.get()
-        self.config["mine_q_mode"] = self.mine_q_mode_var.get()
-        self.config["mine_q_direction"] = self.mine_q_direction_var.get()
-        self.config["mine_nudge"] = self.mine_nudge_var.get()
-        self.config["mine_nudge_px"] = self.mine_nudge_px_var.get()
         # E-spam settings
         self.config["espam_hold_mode"] = self.espam_hold_mode_var.get()
         self.config["espam_repeat_delay"] = self.espam_repeat_delay_var.get()
+        # Ammo settings
+        self.config["untitled1_hotkey"] = self.untitled1_hotkey_var.get()
+        self.config["untitled1_repeat"] = self.untitled1_repeat_var.get()
         # Quick disconnect hotkeys
         self.config["dc_both_hotkey"] = self.dc_both_hotkey_var.get()
         self.config["dc_outbound_hotkey"] = self.dc_outbound_hotkey_var.get()
@@ -2802,14 +2363,46 @@ class QuickDupeApp:
         self.config["stay_on_top"] = self.stay_on_top_var.get()
         self.config["show_overlay"] = self.show_overlay_var.get()
         self.config["timing_variance"] = self.timing_variance_var.get()
+        self.config["use_drag_drop"] = self.use_drag_drop_var.get()
         # Window hotkeys
         self.config["minimize_hotkey"] = self.minimize_hotkey_var.get()
         self.config["tray_hotkey"] = self.tray_hotkey_var.get()
-        # Reconnect macro hotkey
-        self.config["reconnect_hotkey"] = self.reconnect_hotkey_var.get()
-        # Stop all hotkey
-        self.config["stop_hotkey"] = self.stop_hotkey_var.get()
         save_config(self.config)
+
+    def reset_keydoor_defaults(self):
+        """Reset all keydoor timing parameters to defaults"""
+        self.keydoor_x_hold_var.set(1250)
+        self.keydoor_tab_hold_var.set(21)
+        self.keydoor_wait_before_e_var.set(73)
+        self.keydoor_espam_count_var.set(30)
+        self.keydoor_e_hold_var.set(13)
+        self.keydoor_e_delay_var.set(12)
+        # Reset positions
+        self.keydoor_slot_pos = (3024, 669)
+        self.keydoor_drag_start = (3024, 669)
+        self.keydoor_drag_end = (550, 1247)
+        self.config["keydoor_slot_pos"] = [3024, 669]
+        self.config["keydoor_drag_start"] = [3024, 669]
+        self.config["keydoor_drag_end"] = [550, 1247]
+        self._update_record_button_text()
+        self.save_settings()
+        print("[RESET] Keydoor parameters reset to defaults")
+
+    def reset_throwable_defaults(self):
+        """Reset all throwable timing parameters to defaults"""
+        self.throw_hold_time_var.set(45)
+        self.throw_dc_delay_before_var.set(40)
+        self.throw_wait_before_e_var.set(200)
+        self.throw_e_hold_var.set(50)
+        self.throw_double_e_var.set(False)
+        self.throw_e_gap_var.set(200)
+        self.throw_e2_hold_var.set(50)
+        self.throw_wait_after_e_var.set(100)
+        self.throw_wait_after_q_var.set(750)
+        self.throw_dc_count_var.set(12)
+        self.throw_dc_delay_var.set(86)
+        self.save_settings()
+        print("[RESET] Throwable parameters reset to defaults")
 
     def reset_triggernade_defaults(self):
         """Reset all triggernade timing parameters to defaults (from working recording)"""
@@ -2821,40 +2414,68 @@ class QuickDupeApp:
         self.trig_reconnect_after_var.set(1)  # Reconnect after first M1
         self.trig_m1_hold_var.set(65)  # Hold M1 65ms before M2
         self.trig_m2_hold_var.set(51)  # Hold M2 for 51ms
-        self.trig_drag_speed_var.set(8)  # Drag speed
         self.trig_dc_delay_var.set(10)  # Delay before DC
-        self.trig_m1_before_interweave_var.set(1)  # 1 M1 before E interweave
-        self.triggernade_q_spam_var.set(False)  # Q spam disabled by default (not needed with interleaved E)
-        # Note: Positions are NOT reset - only timing parameters
+        self.trig_m1_before_interweave_var.set(5)  # 5 M1s before E interweave
+        self.triggernade_q_spam_var.set(True)  # Q spam enabled by default
+        # Reset positions
+        self.trig_slot_pos = (3024, 669)
+        self.trig_drag_start = (3024, 669)
+        self.trig_drag_end = (550, 1247)
+        self.config["trig_slot_pos"] = [3024, 669]
+        self.config["trig_drag_start"] = [3024, 669]
+        self.config["trig_drag_end"] = [550, 1247]
+        self._update_record_button_text()
         self.save_settings()
-        print("[RESET] Triggernade parameters reset to defaults (positions preserved)")
+        print("[RESET] Triggernade parameters reset to defaults")
 
     def reset_mine_defaults(self):
-        """Reset all mine dupe timing parameters to defaults (based on your successful recordings)"""
-        # These are from your exact timings that worked 100%
-        self.mine_cook_var.set(236)  # Cook time (M1 to TAB)
-        self.mine_dc_delay_var.set(99)  # TAB to DC delay
-        self.mine_drag_speed_var.set(8)  # Drag speed
-        self.mine_pre_close_var.set(100)  # After drag to TAB close
-        self.mine_tab_hold_var.set(80)  # TAB hold duration
-        self.mine_close_reconnect_var.set(409)  # TAB close to reconnect
-        self.mine_click_delay_var.set(7)  # Reconnect to pickup click (INSTANT!)
-        self.mine_pickup_hold_var.set(1336)  # Pickup click hold
-        self.mine_e_delay_var.set(868)  # After pickup to E
-        self.mine_loop_delay_var.set(550)  # Loop delay
-        self.mine_reselect_var.set(True)
-        self.mine_nudge_var.set(True)
-        self.mine_nudge_px_var.set(50)
-        # Q radial mode with default direction
-        self.mine_q_mode_var.set("radial")
-        self.mine_q_direction_var.set("S")
-        self.mine_q_dir_btn.config(text="S")
-        # Default positions (for 4K resolution)
-        self.mine_drag_start = (3032, 1236)
-        self.mine_drag_end = (3171, 1593)
-        self.mine_drag_var.set(f"{self.mine_drag_start} → {self.mine_drag_end}")
+        """Reset all mine dupe timing parameters to defaults"""
+        self.mine_cook_var.set(980)
+        self.mine_dc_delay_var.set(50)
+        self.mine_x_hold_var.set(817)
+        self.mine_click_delay_var.set(50)
+        self.mine_pickup_hold_var.set(1800)
+        self.mine_e_delay_var.set(80)
+        self.mine_loop_delay_var.set(800)
+        # Reset positions
+        self.mine_slot_pos = (2966, 1196)
+        self.mine_drag_start = (2966, 1196)
+        self.mine_drag_end = (1035, 1291)
+        self.config["mine_slot_pos"] = [2966, 1196]
+        self.config["mine_drag_start"] = [2966, 1196]
+        self.config["mine_drag_end"] = [1035, 1291]
+        self._update_record_button_text()
         self.save_settings()
-        print("[RESET] Mine dupe parameters reset to YOUR successful timings")
+        print("[RESET] Mine dupe parameters reset to defaults")
+
+    def reset_untitled1_defaults(self):
+        """Reset Ammo timing parameters to defaults"""
+        self.um1_tab_hold_var.set(110)
+        self.um1_after_tab_open_var.set(200)
+        self.um1_rclick_hold_var.set(140)
+        self.um1_after_rclick_var.set(200)
+        self.um1_after_dc_var.set(100)
+        self.um1_context_hold_var.set(150)
+        self.um1_after_context_var.set(300)
+        self.um1_after_reconnect_var.set(300)
+        self.um1_dblclick_hold_var.set(40)
+        self.um1_dblclick_gap_var.set(30)
+        self.um1_after_dblclick_var.set(100)
+        self.um1_after_tab_close_var.set(150)
+        self.um1_equip_hold_var.set(150)
+        self.um1_loop_delay_var.set(500)
+        # Reset positions
+        self.um1_item_pos = (1777, 975)
+        self.um1_context_pos = (1928, 1389)
+        self.um1_drag_start = (1693, 990)
+        self.um1_drag_end = (2268, 1150)
+        self.config["um1_item_pos"] = [1777, 975]
+        self.config["um1_context_pos"] = [1928, 1389]
+        self.config["um1_drag_start"] = [1693, 990]
+        self.config["um1_drag_end"] = [2268, 1150]
+        self._update_um1_pos_display()
+        self.save_settings()
+        print("[RESET] Ammo parameters reset to defaults")
 
     def reset_all_settings(self):
         """Reset ALL settings including hotkeys and recordings to factory defaults"""
@@ -2866,28 +2487,26 @@ class QuickDupeApp:
         self.config = {}
         save_config(self.config)
 
-        # Reset ALL hotkeys
-        print("[RESET] Clearing all hotkeys...")
+        # Reset all hotkeys
+        self.dc_hotkey_var.set("")
+        self.throwable_hotkey_var.set("")
         self.triggernade_hotkey_var.set("")
         self.espam_hotkey_var.set("")
         self.dc_both_hotkey_var.set("")
         self.dc_outbound_hotkey_var.set("")
         self.dc_inbound_hotkey_var.set("")
         self.tamper_hotkey_var.set("")
-        self.mine_hotkey_var.set("")
-        self.stop_hotkey_var.set("esc")  # Default is esc
-        self.minimize_hotkey_var.set("")
-        self.tray_hotkey_var.set("")
-        print("[RESET] All hotkeys cleared")
 
         # Reset checkboxes
-        print("[RESET] Resetting checkboxes...")
+        self.use_drag_drop_var.set(False)
         self.show_overlay_var.set(True)
         self.stay_on_top_var.set(False)
+        self.throwable_repeat_var.set(True)
         self.triggernade_repeat_var.set(True)
 
-        # Reset ALL timing sliders and positions
-        print("[RESET] Resetting all timing defaults...")
+        # Reset all timing sliders and positions (these call _update_record_button_text)
+        self.reset_keydoor_defaults()
+        self.reset_throwable_defaults()
         self.reset_triggernade_defaults()
         self.reset_mine_defaults()
 
@@ -2897,180 +2516,6 @@ class QuickDupeApp:
         print("[RESET] ALL settings reset to factory defaults")
         self.show_overlay("All settings reset!")
 
-    # ===== EXPORT/IMPORT SETTINGS =====
-    def _get_triggernade_settings(self):
-        """Get all triggernade-related settings as a dict"""
-        return {
-            "triggernade_hotkey": self.triggernade_hotkey_var.get(),
-            "triggernade_repeat": self.triggernade_repeat_var.get(),
-            "triggernade_q_spam": self.triggernade_q_spam_var.get(),
-            "trig_m1_hold": self.trig_m1_hold_var.get(),
-            "trig_m2_hold": self.trig_m2_hold_var.get(),
-            "trig_drag_speed": self.trig_drag_speed_var.get(),
-            "trig_dc_delay": self.trig_dc_delay_var.get(),
-            "trig_dc_throws": self.trig_dc_throws_var.get(),
-            "trig_throw_delay": self.trig_throw_delay_var.get(),
-            "trig_reconnect_after": self.trig_reconnect_after_var.get(),
-            "wait_before_espam": self.wait_before_espam_var.get(),
-            "espam_duration": self.espam_duration_var.get(),
-            "trig_m1_before_interweave": self.trig_m1_before_interweave_var.get(),
-            "wait_before_cycle": self.wait_before_cycle_var.get(),
-            "trig_slot_pos": list(self.trig_slot_pos),
-            "trig_drop_pos": list(self.trig_drop_pos),
-        }
-
-    def _set_triggernade_settings(self, data):
-        """Apply triggernade settings from dict"""
-        if "triggernade_hotkey" in data: self.triggernade_hotkey_var.set(data["triggernade_hotkey"])
-        if "triggernade_repeat" in data: self.triggernade_repeat_var.set(data["triggernade_repeat"])
-        if "triggernade_q_spam" in data: self.triggernade_q_spam_var.set(data["triggernade_q_spam"])
-        if "trig_m1_hold" in data: self.trig_m1_hold_var.set(data["trig_m1_hold"])
-        if "trig_m2_hold" in data: self.trig_m2_hold_var.set(data["trig_m2_hold"])
-        if "trig_drag_speed" in data: self.trig_drag_speed_var.set(data["trig_drag_speed"])
-        if "trig_dc_delay" in data: self.trig_dc_delay_var.set(data["trig_dc_delay"])
-        if "trig_dc_throws" in data: self.trig_dc_throws_var.set(data["trig_dc_throws"])
-        if "trig_throw_delay" in data: self.trig_throw_delay_var.set(data["trig_throw_delay"])
-        if "trig_reconnect_after" in data: self.trig_reconnect_after_var.set(data["trig_reconnect_after"])
-        if "wait_before_espam" in data: self.wait_before_espam_var.set(data["wait_before_espam"])
-        if "espam_duration" in data: self.espam_duration_var.set(data["espam_duration"])
-        if "trig_m1_before_interweave" in data: self.trig_m1_before_interweave_var.set(data["trig_m1_before_interweave"])
-        if "wait_before_cycle" in data: self.wait_before_cycle_var.set(data["wait_before_cycle"])
-        if "trig_slot_pos" in data:
-            self.trig_slot_pos = tuple(data["trig_slot_pos"])
-            self.config["trig_slot_pos"] = data["trig_slot_pos"]
-        if "trig_drop_pos" in data:
-            self.trig_drop_pos = tuple(data["trig_drop_pos"])
-            self.config["trig_drop_pos"] = data["trig_drop_pos"]
-            self.trig_drag_var.set(f"Slot:{list(self.trig_slot_pos)} Drop:{list(self.trig_drop_pos)}")
-        self.save_settings()
-
-    def _get_mine_settings(self):
-        """Get all mine dupe-related settings as a dict"""
-        return {
-            "mine_hotkey": self.mine_hotkey_var.get(),
-            "mine_repeat": self.mine_repeat_var.get(),
-            "mine_cook": self.mine_cook_var.get(),
-            "mine_dc_delay": self.mine_dc_delay_var.get(),
-            "mine_drag_speed": self.mine_drag_speed_var.get(),
-            "mine_pre_close": self.mine_pre_close_var.get(),
-            "mine_tab_hold": self.mine_tab_hold_var.get(),
-            "mine_close_reconnect": self.mine_close_reconnect_var.get(),
-            "mine_click_delay": self.mine_click_delay_var.get(),
-            "mine_pickup_hold": self.mine_pickup_hold_var.get(),
-            "mine_e_delay": self.mine_e_delay_var.get(),
-            "mine_loop_delay": self.mine_loop_delay_var.get(),
-            "mine_reselect": self.mine_reselect_var.get(),
-            "mine_q_mode": self.mine_q_mode_var.get(),
-            "mine_q_direction": self.mine_q_direction_var.get(),
-            "mine_nudge": self.mine_nudge_var.get(),
-            "mine_nudge_px": self.mine_nudge_px_var.get(),
-            "mine_slot_pos": list(self.mine_slot_pos),
-            "mine_drop_pos": list(self.mine_drop_pos),
-        }
-
-    def _set_mine_settings(self, data):
-        """Apply mine dupe settings from dict"""
-        if "mine_hotkey" in data: self.mine_hotkey_var.set(data["mine_hotkey"])
-        if "mine_repeat" in data: self.mine_repeat_var.set(data["mine_repeat"])
-        if "mine_cook" in data: self.mine_cook_var.set(data["mine_cook"])
-        if "mine_dc_delay" in data: self.mine_dc_delay_var.set(data["mine_dc_delay"])
-        if "mine_drag_speed" in data: self.mine_drag_speed_var.set(data["mine_drag_speed"])
-        if "mine_pre_close" in data: self.mine_pre_close_var.set(data["mine_pre_close"])
-        if "mine_tab_hold" in data: self.mine_tab_hold_var.set(data["mine_tab_hold"])
-        if "mine_close_reconnect" in data: self.mine_close_reconnect_var.set(data["mine_close_reconnect"])
-        if "mine_click_delay" in data: self.mine_click_delay_var.set(data["mine_click_delay"])
-        if "mine_pickup_hold" in data: self.mine_pickup_hold_var.set(data["mine_pickup_hold"])
-        if "mine_e_delay" in data: self.mine_e_delay_var.set(data["mine_e_delay"])
-        if "mine_loop_delay" in data: self.mine_loop_delay_var.set(data["mine_loop_delay"])
-        if "mine_reselect" in data: self.mine_reselect_var.set(data["mine_reselect"])
-        if "mine_q_mode" in data: self.mine_q_mode_var.set(data["mine_q_mode"])
-        if "mine_q_direction" in data:
-            self.mine_q_direction_var.set(data["mine_q_direction"])
-            self.mine_q_dir_btn.config(text=data["mine_q_direction"])
-        if "mine_nudge" in data: self.mine_nudge_var.set(data["mine_nudge"])
-        if "mine_nudge_px" in data: self.mine_nudge_px_var.set(data["mine_nudge_px"])
-        if "mine_slot_pos" in data:
-            self.mine_slot_pos = tuple(data["mine_slot_pos"])
-            self.config["mine_slot_pos"] = data["mine_slot_pos"]
-        if "mine_drop_pos" in data:
-            self.mine_drop_pos = tuple(data["mine_drop_pos"])
-            self.config["mine_drop_pos"] = data["mine_drop_pos"]
-            self.mine_drag_var.set(f"Slot:{list(self.mine_slot_pos)} Drop:{list(self.mine_drop_pos)}")
-        self.save_settings()
-
-    def export_triggernade(self):
-        """Export triggernade settings to file"""
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
-                                            initialfile="triggernade_settings.json")
-        if path:
-            with open(path, 'w') as f:
-                json.dump({"type": "triggernade", **self._get_triggernade_settings()}, f, indent=2)
-            print(f"[EXPORT] Triggernade settings saved to {path}")
-
-    def import_triggernade(self):
-        """Import triggernade settings from file"""
-        path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
-        if path:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            self._set_triggernade_settings(data)
-            self.register_hotkeys()
-            print(f"[IMPORT] Triggernade settings loaded from {path}")
-
-    def export_mine(self):
-        """Export mine dupe settings to file"""
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
-                                            initialfile="mine_settings.json")
-        if path:
-            with open(path, 'w') as f:
-                json.dump({"type": "mine", **self._get_mine_settings()}, f, indent=2)
-            print(f"[EXPORT] Mine settings saved to {path}")
-
-    def import_mine(self):
-        """Import mine dupe settings from file"""
-        path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
-        if path:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            self._set_mine_settings(data)
-            self.register_hotkeys()
-            print(f"[IMPORT] Mine settings loaded from {path}")
-
-    def export_all_settings(self):
-        """Export all macro settings to a single file"""
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
-                                            initialfile="all_settings.json")
-        if path:
-            data = {
-                "type": "all",
-                "triggernade": self._get_triggernade_settings(),
-                "mine": self._get_mine_settings(),
-            }
-            with open(path, 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"[EXPORT] All settings saved to {path}")
-
-    def import_all_settings(self):
-        """Import all macro settings from file"""
-        path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
-        if path:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            # Handle both single-macro and all-settings files
-            if data.get("type") == "all":
-                if "triggernade" in data: self._set_triggernade_settings(data["triggernade"])
-                if "mine" in data: self._set_mine_settings(data["mine"])
-            elif data.get("type") == "triggernade":
-                self._set_triggernade_settings(data)
-            elif data.get("type") == "mine":
-                self._set_mine_settings(data)
-            else:
-                # Try to detect from keys
-                if "triggernade_hotkey" in data: self._set_triggernade_settings(data)
-                if "mine_hotkey" in data: self._set_mine_settings(data)
-            self.register_hotkeys()
-            print(f"[IMPORT] Settings loaded from {path}")
-
     def register_hotkeys(self):
         # Clear ALL hooks first to prevent ghost hotkeys (including on_press_key hooks)
         try:
@@ -3079,8 +2524,9 @@ class QuickDupeApp:
         except Exception as e:
             print(f"[HOTKEY] Error clearing hotkeys: {e}")
 
+        self.dc_hotkey_registered = None
+        self.throwable_hotkey_registered = None
         self.triggernade_hotkey_registered = None
-        self.quickdrop_hotkey_registered = None
         self.espam_hotkey_registered = None
         self.escape_hotkey_registered = None
         self.dc_both_hotkey_registered = None
@@ -3090,16 +2536,28 @@ class QuickDupeApp:
         self.mine_hotkey_registered = None
         self.minimize_hotkey_registered = None
         self.tray_hotkey_registered = None
-        self.reconnect_hotkey_registered = None
-        # Alt+hotkey for re-recording positions
-        self.trig_rerecord_registered = None
-        self.mine_rerecord_registered = None
 
         # Register ALL hotkeys
+        dc_hk = self.dc_hotkey_var.get()
+        throw_hk = self.throwable_hotkey_var.get()
         trig_hk = self.triggernade_hotkey_var.get()
         espam_hk = self.espam_hotkey_var.get()
 
-        print(f"[HOTKEY] Registering hotkeys: triggernade='{trig_hk}', espam='{espam_hk}'")
+        print(f"[HOTKEY] Registering hotkeys: keydoor='{dc_hk}', throwable='{throw_hk}', triggernade='{trig_hk}', espam='{espam_hk}'")
+
+        if dc_hk and dc_hk != "Press key...":
+            try:
+                self.dc_hotkey_registered = keyboard.add_hotkey(dc_hk, self.on_dc_hotkey, suppress=False)
+                print(f"[HOTKEY] Keydoor registered OK: '{dc_hk}' -> {self.dc_hotkey_registered}")
+            except Exception as e:
+                print(f"[HOTKEY] FAILED keydoor '{dc_hk}': {e}")
+
+        if throw_hk and throw_hk != "Press key...":
+            try:
+                self.throwable_hotkey_registered = keyboard.add_hotkey(throw_hk, self.on_throwable_hotkey, suppress=False)
+                print(f"[HOTKEY] Throwable registered OK: '{throw_hk}' -> {self.throwable_hotkey_registered}")
+            except Exception as e:
+                print(f"[HOTKEY] FAILED throwable '{throw_hk}': {e}")
 
         if trig_hk and trig_hk != "Press key...":
             try:
@@ -3107,14 +2565,6 @@ class QuickDupeApp:
                 print(f"[HOTKEY] Triggernade registered OK: '{trig_hk}' -> {self.triggernade_hotkey_registered}")
             except Exception as e:
                 print(f"[HOTKEY] FAILED triggernade '{trig_hk}': {e}")
-
-        qd_hk = self.quickdrop_hotkey_var.get()
-        if qd_hk and qd_hk != "Press key...":
-            try:
-                self.quickdrop_hotkey_registered = keyboard.add_hotkey(qd_hk, self.on_quickdrop_hotkey, suppress=False)
-                print(f"[HOTKEY] QuickDrop registered OK: '{qd_hk}' -> {self.quickdrop_hotkey_registered}")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED quickdrop '{qd_hk}': {e}")
 
         if espam_hk and espam_hk != "Press key...":
             try:
@@ -3130,6 +2580,14 @@ class QuickDupeApp:
                 print(f"[HOTKEY] Mine registered OK: '{mine_hk}' -> {self.mine_hotkey_registered}")
             except Exception as e:
                 print(f"[HOTKEY] FAILED mine '{mine_hk}': {e}")
+
+        untitled1_hk = self.untitled1_hotkey_var.get()
+        if untitled1_hk and untitled1_hk != "Press key...":
+            try:
+                self.untitled1_hotkey_registered = keyboard.add_hotkey(untitled1_hk, self.on_untitled1_hotkey, suppress=False)
+                print(f"[HOTKEY] Untitled1 registered OK: '{untitled1_hk}' -> {self.untitled1_hotkey_registered}")
+            except Exception as e:
+                print(f"[HOTKEY] FAILED untitled1 '{untitled1_hk}': {e}")
 
         # Register quick disconnect hotkeys (use on_press_key so they work while other keys held)
         dc_both_hk = self.dc_both_hotkey_var.get()
@@ -3182,84 +2640,362 @@ class QuickDupeApp:
             except Exception as e:
                 print(f"[HOTKEY] FAILED tray '{tray_hk}': {e}")
 
-        # Register reconnect macro hotkey
-        reconnect_hk = self.reconnect_hotkey_var.get()
-        if reconnect_hk and reconnect_hk != "Press key...":
-            try:
-                self.reconnect_hotkey_registered = keyboard.add_hotkey(reconnect_hk, self.play_reconnect_macro, suppress=False)
-                print(f"[HOTKEY] Reconnect macro registered OK: '{reconnect_hk}' -> {self.reconnect_hotkey_registered}")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED reconnect '{reconnect_hk}': {e}")
-
-        # Register configurable stop all hotkey
-        stop_hk = self.stop_hotkey_var.get()
-        if stop_hk and stop_hk != "Press key...":
-            try:
-                self.escape_hotkey_registered = keyboard.add_hotkey(stop_hk, self.stop_all_macros, suppress=False)
-                print(f"[HOTKEY] Stop All registered OK: '{stop_hk}' -> {self.escape_hotkey_registered}")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED stop all '{stop_hk}': {e}")
-
-        # Register Alt+hotkey variants for quick position re-recording
-        print("[HOTKEY] Registering Alt+hotkey re-record shortcuts...")
-
-        # Triggernade: Alt+hotkey = re-record position
-        if trig_hk and trig_hk != "Press key...":
-            try:
-                alt_trig_hk = f"alt+{trig_hk}" if not trig_hk.startswith("alt+") else trig_hk
-                self.trig_rerecord_registered = keyboard.add_hotkey(alt_trig_hk, self.start_trig_drag_recording, suppress=False)
-                print(f"[HOTKEY] Triggernade re-record registered: '{alt_trig_hk}'")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED triggernade re-record '{alt_trig_hk}': {e}")
-
-        # Mine: Alt+hotkey = re-record position
-        if mine_hk and mine_hk != "Press key...":
-            try:
-                alt_mine_hk = f"alt+{mine_hk}" if not mine_hk.startswith("alt+") else mine_hk
-                self.mine_rerecord_registered = keyboard.add_hotkey(alt_mine_hk, self.start_mine_drag_recording, suppress=False)
-                print(f"[HOTKEY] Mine re-record registered: '{alt_mine_hk}'")
-            except Exception as e:
-                print(f"[HOTKEY] FAILED mine re-record '{alt_mine_hk}': {e}")
+        # Always register Escape as universal stop
+        try:
+            self.escape_hotkey_registered = keyboard.add_hotkey('esc', self.stop_all_macros, suppress=False)
+            print(f"[HOTKEY] Escape (stop all) registered OK: {self.escape_hotkey_registered}")
+        except Exception as e:
+            print(f"[HOTKEY] FAILED escape: {e}")
 
     def stop_all_macros(self):
-        """Universal stop - triggered by configurable hotkey"""
-        # Don't interrupt reconnect macro recording
-        if getattr(self, '_reconnect_recording_active', False):
-            print("[HOTKEY] Stop All pressed but reconnect recording active - ignoring")
-            return
-        print("[HOTKEY] Stop All pressed - stopping all macros!")
+        """Universal stop - triggered by Escape"""
+        print("[HOTKEY] ESCAPE pressed - stopping all macros!")
+        self.keydoor_stop = True
+        self.throwable_stop = True
         self.triggernade_stop = True
-        self.quickdrop_stop = True
         self.espam_stop = True
         self.mine_stop = True
-        # Also cancel any active recordings
-        self._drag_recording_cancelled = True
-        self._mine_recording_cancelled = True
-        self.root.after(0, lambda: self.show_overlay("Stopped"))
+        self.untitled1_stop = True
+        self.root.after(0, lambda: self.show_overlay("All macros stopped!"))
+
+    def on_dc_hotkey(self):
+        """Run keydoor macro (runs once)"""
+        print("[HOTKEY] Keydoor hotkey PRESSED!")
+        if self.keydoor_running:
+            # Already running, stop it
+            self.keydoor_stop = True
+            print("[HOTKEY] Stopping keydoor...")
+            return
+
+        self.keydoor_stop = False
+        self.keydoor_running = True
+        # Use root.after to update UI from main thread
+        self.root.after(0, lambda: self.dc_status_var.set("RUNNING"))
+        self.root.after(0, lambda: self.dc_status_label.config(foreground="orange"))
+        self.root.after(0, lambda: self.show_overlay("Keydoor running..."))
+        threading.Thread(target=self.run_keydoor_macro, daemon=True).start()
+
+    def run_keydoor_macro(self):
+        """
+        Keydoor macro (configurable timings):
+        1. Disconnect
+        2. Hold Xbox X button (drops key)
+        3. TAB to exit inventory
+        4. Start E spam, reconnect almost immediately
+        5. Continue E spam after reconnect
+        """
+        is_disconnected = False
+        gp = get_gamepad()
+
+        # Only require gamepad if NOT using drag drop
+        if gp is None and not self.use_drag_drop_var.get():
+            print("[KEYDOOR] Skipping - ViGEmBus not installed (enable drag drop or install ViGEmBus)")
+            self.root.after(0, lambda: self.dc_status_var.set("ERROR: Install ViGEmBus"))
+            self.root.after(0, lambda: self.dc_status_label.config(foreground="red"))
+            self.keydoor_running = False
+            return
+
+        # Get configurable values
+        x_hold_ms = self.keydoor_x_hold_var.get()
+        tab_hold_ms = self.keydoor_tab_hold_var.get()
+        wait_before_e_ms = self.keydoor_wait_before_e_var.get()
+        espam_count = self.keydoor_espam_count_var.get()
+        e_hold_ms = self.keydoor_e_hold_var.get()
+        e_delay_ms = self.keydoor_e_delay_var.get()
+
+        # ===== Disconnect FIRST =====
+        print("[KEYDOOR] Disconnecting...")
+        start_packet_drop()
+        is_disconnected = True
+
+        # ===== Drop item (Xbox X or drag fallback) =====
+        print(f"[KEYDOOR] use_drag_drop_var = {self.use_drag_drop_var.get()}")
+        if self.use_drag_drop_var.get():
+            # Drag fallback using pynput - need to open inventory first
+            print(f"[KEYDOOR] Opening inventory...")
+            pynput_keyboard.press(Key.tab)
+            self.vsleep(300)
+            pynput_keyboard.release(Key.tab)
+            self.vsleep(120)
+
+            print(f"[KEYDOOR] Using drag drop: {self.keydoor_drag_start} → {self.keydoor_drag_end}")
+
+            # Clear any stuck mouse state first
+            pynput_mouse.release(MouseButton.left)
+
+            # Move to start position
+            pynput_mouse.position = self.keydoor_drag_start
+            self.vsleep(30)
+
+            # Press and drag
+            pynput_mouse.press(MouseButton.left)
+            self.vsleep(80)  # Click registers
+
+            # Smooth drag - 20 steps over ~150ms
+            start_x, start_y = self.keydoor_drag_start
+            end_x, end_y = self.keydoor_drag_end
+            dx = end_x - start_x
+            dy = end_y - start_y
+            steps = 20
+            for i in range(1, steps + 1):
+                t = i / steps
+                x = int(start_x + dx * t)
+                y = int(start_y + dy * t)
+                pynput_mouse.position = (x, y)
+                self.vsleep(7)
+
+            pynput_mouse.release(MouseButton.left)
+            print(f"[KEYDOOR] Drag complete")
+        else:
+            # Xbox X button - move to recorded slot position first
+            print(f"[KEYDOOR] Moving to {self.keydoor_slot_pos}, holding X for {x_hold_ms}ms")
+            pynput_mouse.position = self.keydoor_slot_pos
+            self.vsleep(20)
+            gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+            gp.update()
+
+            # Hold for configured time (cancelable)
+            t = 0
+            while t < x_hold_ms:
+                if self.keydoor_stop:
+                    gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+                    gp.update()
+                    self.finish_keydoor(is_disconnected)
+                    return
+                self.vsleep(10)
+                t += 10
+
+            gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+            gp.update()
+            print("[KEYDOOR] X released - key should be dropped")
+
+        if self.keydoor_stop:
+            self.finish_keydoor(is_disconnected)
+            return
+
+        # TAB to exit inventory
+        pynput_keyboard.press(Key.tab)
+        self.vsleep(tab_hold_ms)
+        pynput_keyboard.release(Key.tab)
+        self.vsleep(wait_before_e_ms)
+        print("[KEYDOOR] TAB - exited inventory")
+
+        if self.keydoor_stop:
+            self.finish_keydoor(is_disconnected)
+            return
+
+        # ===== E spam - reconnect after just 1 press =====
+        print("[KEYDOOR] Starting E spam...")
+        pynput_keyboard.press('e')
+        self.vsleep(e_hold_ms)
+        pynput_keyboard.release('e')
+        self.vsleep(7)
+
+        # ===== Reconnect almost immediately =====
+        print("[KEYDOOR] Reconnecting...")
+        stop_packet_drop()
+        is_disconnected = False
+
+        # ===== Continue E spam after reconnect =====
+        print(f"[KEYDOOR] Spamming E {espam_count}x...")
+        for i in range(espam_count):
+            if self.keydoor_stop:
+                break
+            pynput_keyboard.press('e')
+            self.vsleep(e_hold_ms)
+            pynput_keyboard.release('e')
+            self.vsleep(e_delay_ms)
+
+        # Done
+        print("[KEYDOOR] Done!")
+        self.finish_keydoor(is_disconnected)
+
+    def finish_keydoor(self, is_disconnected):
+        """Clean up keydoor macro"""
+        if is_disconnected:
+            stop_packet_drop()
+        self.keydoor_running = False
+        self.keydoor_stop = False
+        # Use root.after to update UI from main thread
+        self.root.after(0, lambda: self.dc_status_var.set("Ready"))
+        self.root.after(0, lambda: self.dc_status_label.config(foreground="gray"))
+        self.root.after(0, lambda: self.show_overlay("Keydoor done."))
+
+    def on_throwable_hotkey(self):
+        """Toggle throwable macro"""
+        print(f"[HOTKEY] Throwable hotkey PRESSED! running={self.throwable_running}")
+        if self.throwable_running:
+            # Stop it
+            print("[HOTKEY] Setting throwable_stop = True")
+            self.throwable_stop = True
+            self.root.after(0, lambda: self.throwable_status_var.set("Stopping..."))
+        else:
+            # Start it
+            print("[HOTKEY] Starting throwable macro")
+            self.throwable_stop = False
+            self.throwable_running = True
+            self.root.after(0, lambda: self.throwable_status_var.set("RUNNING"))
+            self.root.after(0, lambda: self.throwable_status_label.config(foreground="orange"))
+            self.root.after(0, lambda: self.show_overlay("Throwable running..."))
+            threading.Thread(target=self.run_throwable_macro, daemon=True).start()
+
+    def run_throwable_macro(self):
+        """
+        Throwable dupe macro - EXACT match to GHUB Lua script
+        """
+        repeat = self.throwable_repeat_var.get()
+        is_disconnected = False
+        cycle = 0
+
+        # Equip throwable first (not in original but needed for first cycle)
+        print("[PREP] Q to equip throwable")
+        pynput_keyboard.press('q')
+        self.vsleep(10)
+        pynput_keyboard.release('q')
+        self.vsleep(500)
+        print("[PREP] Done, starting loop")
+
+        try:
+            while True:
+                cycle += 1
+                cycle_start = time.perf_counter()
+                print(f"\n=== CYCLE {cycle} ===")
+
+                # ===== Initial throw =====
+                throw_hold = self.throw_hold_time_var.get()
+                dc_delay = self.throw_dc_delay_before_var.get()
+
+                self.vsleep(5)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(throw_hold)
+                pynput_mouse.release(MouseButton.left)
+                print(f"[{cycle}] Throw done (held {throw_hold}ms)")
+
+                # ===== Delay before disconnect =====
+                if dc_delay > 0:
+                    self.vsleep(dc_delay)
+                    print(f"[{cycle}] Waited {dc_delay}ms before DC")
+
+                start_packet_drop()
+                is_disconnected = True
+                print(f"[{cycle}] Disconnected")
+
+                # ===== Spam M1 while disconnected (configurable) =====
+                throw_count = self.throw_dc_count_var.get()
+                base_delay = self.throw_dc_delay_var.get()
+                # Generate balanced varied delays (total stays same)
+                varied_delays = self.vary_balanced(base_delay, throw_count)
+                print(f"[{cycle}] Throwing {throw_count}x with ~{base_delay}ms between (variance applied)")
+                for i in range(throw_count):
+                    if self.throwable_stop:
+                        break
+                    delay = varied_delays[i] / 2  # Split between down and up
+                    pynput_mouse.press(MouseButton.left)
+                    self.vsleep(delay)
+                    pynput_mouse.release(MouseButton.left)
+                    self.vsleep(delay)
+
+                if self.throwable_stop:
+                    print(f"[{cycle}] STOPPED during M1 spam")
+                    break
+
+                # ===== Reconnect (GHUB: press, Sleep10, release) =====
+                stop_packet_drop()
+                is_disconnected = False
+                print(f"[{cycle}] Reconnected")
+
+                # ===== Spam M1 x8 after reconnect (GHUB: 50ms down, 50ms up) =====
+                spam2_start = time.perf_counter()
+                for i in range(1):
+                    if self.throwable_stop:
+                        break
+                    pynput_mouse.press(MouseButton.left)
+                    self.vsleep(50)
+                    pynput_mouse.release(MouseButton.left)
+                    self.vsleep(50)
+
+                if self.throwable_stop:
+                    print(f"[{cycle}] STOPPED during M1 spam after reconnect")
+                    break
+
+                # ===== Wait before E (configurable) =====
+                wait_before_e_ms = self.throw_wait_before_e_var.get()
+                wait_after_e_ms = self.throw_wait_after_e_var.get()
+                wait_after_q_ms = self.throw_wait_after_q_var.get()
+
+                print(f"[{cycle}] Waiting ~{wait_before_e_ms}ms before E...")
+                self.vsleep(wait_before_e_ms)
+
+                if self.throwable_stop:
+                    print(f"[{cycle}] STOPPED before E")
+                    break
+
+                # ===== E (pickup / disarm) =====
+                e_hold_ms = self.throw_e_hold_var.get()
+                pynput_keyboard.press('e')
+                self.vsleep(e_hold_ms)
+                pynput_keyboard.release('e')
+                print(f"[{cycle}] E held {e_hold_ms}ms")
+
+                # Second E press if double E enabled (for fuel canisters: disarm then pickup)
+                if self.throw_double_e_var.get():
+                    e_gap_ms = self.throw_e_gap_var.get()
+                    self.vsleep(e_gap_ms)  # Configurable gap between presses
+                    e2_hold_ms = self.throw_e2_hold_var.get()
+                    pynput_keyboard.press('e')
+                    self.vsleep(e2_hold_ms)
+                    pynput_keyboard.release('e')
+                    print(f"[{cycle}] 2nd E held {e2_hold_ms}ms")
+
+                print(f"[{cycle}] Waiting ~{wait_after_e_ms}ms after E...")
+                self.vsleep(wait_after_e_ms)
+
+                if self.throwable_stop:
+                    print(f"[{cycle}] STOPPED before Q")
+                    break
+
+                # ===== Q (re-equip) =====
+                pynput_keyboard.press('q')
+                self.vsleep(50)
+                pynput_keyboard.release('q')
+                # Add extra loop variance (scales with variance slider - more extreme)
+                variance_pct = self.timing_variance_var.get()
+                extra_loop_var = random.uniform(0, variance_pct * 10) if variance_pct > 0 else 0
+                loop_wait = wait_after_q_ms + extra_loop_var
+                print(f"[{cycle}] Q pressed, waiting {loop_wait:.0f}ms before next cycle...")
+                self.vsleep(loop_wait)
+
+                cycle_time = (time.perf_counter() - cycle_start) * 1000
+                print(f"[{cycle}] CYCLE DONE in {cycle_time:.0f}ms")
+
+                if not repeat or self.throwable_stop:
+                    break
+        finally:
+            # ALWAYS ensure reconnected when stopped
+            if is_disconnected:
+                stop_packet_drop()
+            # Done
+            self.throwable_running = False
+            self.throwable_stop = False
+            self.root.after(0, lambda: self.throwable_status_var.set("Ready"))
+            self.root.after(0, lambda: self.throwable_status_label.config(foreground="gray"))
+            self.root.after(0, lambda: self.show_overlay("Throwable stopped."))
 
     def on_triggernade_hotkey(self):
         """Toggle triggernade macro"""
-        if not self._triggernade_lock.acquire(blocking=False):
-            return  # Already processing, ignore duplicate
-        try:
-            print(f"[HOTKEY] Triggernade hotkey PRESSED! running={self.triggernade_running}")
-            if self.triggernade_running:
-                print("[HOTKEY] Setting triggernade_stop = True")
-                self.triggernade_stop = True
-                self.root.after(0, lambda: self.triggernade_status_var.set("Stopping..."))
-            else:
-                print("[HOTKEY] Starting triggernade macro")
-                # Reset ALL stop flags so vsleep doesn't exit early
-                self.triggernade_stop = False
-                self.mine_stop = False
-                self.espam_stop = False
-                self.triggernade_running = True
-                self.root.after(0, lambda: self.triggernade_status_var.set("RUNNING"))
-                self.root.after(0, lambda: self.triggernade_status_label.config(foreground="orange"))
-                self.root.after(0, lambda: self.show_overlay("Wolfpack/Triggernade started"))
-                threading.Thread(target=self.run_triggernade_macro, daemon=True).start()
-        finally:
-            self._triggernade_lock.release()
+        print(f"[HOTKEY] Triggernade hotkey PRESSED! running={self.triggernade_running}")
+        if self.triggernade_running:
+            print("[HOTKEY] Setting triggernade_stop = True")
+            self.triggernade_stop = True
+            self.root.after(0, lambda: self.triggernade_status_var.set("Stopping..."))
+        else:
+            print("[HOTKEY] Starting triggernade macro")
+            self.triggernade_stop = False
+            self.triggernade_running = True
+            self.root.after(0, lambda: self.triggernade_status_var.set("RUNNING"))
+            self.root.after(0, lambda: self.triggernade_status_label.config(foreground="orange"))
+            self.root.after(0, lambda: self.show_overlay("Wolfpack/Triggernade started"))
+            threading.Thread(target=self.run_triggernade_macro, daemon=True).start()
 
     def run_triggernade_macro(self):
         """
@@ -3352,17 +3088,53 @@ class QuickDupeApp:
                 if self.triggernade_stop:
                     break
 
-                # ===== Wait then drop via curved drag =====
-                self.vsleep(120)  # Wait for inventory to open
-                pynput_mouse.release(MouseButton.left)
-                pynput_mouse.position = self.trig_drag_start
-                self.vsleep(30)
-                pynput_mouse.press(MouseButton.left)
-                self.vsleep(50)
-                drag_speed = self.trig_drag_speed_var.get()
-                self.curved_drag(self.trig_drag_start, self.trig_drag_end, steps=25, step_delay=drag_speed)
-                pynput_mouse.release(MouseButton.left)
-                print(f"[{cycle}] Dropped with curved drag")
+                # ===== Wait then drop (uses recorded timing) =====
+                if self.use_drag_drop_var.get():
+                    # Drag fallback using pynput
+                    self.vsleep(120)  # Wait for inventory to open
+
+                    # Clear any stuck mouse state first
+                    pynput_mouse.release(MouseButton.left)
+
+                    # Move to start position
+                    pynput_mouse.position = self.trig_drag_start
+                    self.vsleep(30)
+
+                    # Press and drag
+                    pynput_mouse.press(MouseButton.left)
+                    self.vsleep(80)  # Click registers
+
+                    # Smooth drag - 20 steps over ~150ms
+                    start_x, start_y = self.trig_drag_start
+                    end_x, end_y = self.trig_drag_end
+                    dx = end_x - start_x
+                    dy = end_y - start_y
+                    steps = 20
+                    for i in range(1, steps + 1):
+                        t = i / steps
+                        x = int(start_x + dx * t)
+                        y = int(start_y + dy * t)
+                        pynput_mouse.position = (x, y)
+                        self.vsleep(7)
+
+                    pynput_mouse.release(MouseButton.left)
+                    print(f"[{cycle}] Dropped with drag: {self.trig_drag_start} → {self.trig_drag_end}")
+                else:
+                    # Xbox X button - uses original hardcoded timing
+                    self.vsleep(300)  # Wait before drop
+                    x_hold_ms = self.keydoor_x_hold_var.get()
+                    pynput_mouse.position = self.trig_slot_pos
+                    self.vsleep(20)
+                    gp = get_gamepad()
+                    if gp:
+                        gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+                        gp.update()
+                        self.vsleep(x_hold_ms)
+                        gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+                        gp.update()
+                        print(f"[{cycle}] Dropped with X ({x_hold_ms}ms)")
+                    else:
+                        print(f"[{cycle}] ERROR: No gamepad for X drop")
 
                 if self.triggernade_stop:
                     break
@@ -3517,146 +3289,21 @@ class QuickDupeApp:
             self.root.after(0, lambda: self.triggernade_status_label.config(foreground="gray"))
             self.root.after(0, lambda: self.show_overlay("Wolfpack/Triggernade stopped."))
 
-    def on_quickdrop_hotkey(self):
-        """Toggle quick drop macro (no DC version)"""
-        if not self._quickdrop_lock.acquire(blocking=False):
-            return
-        try:
-            print(f"[HOTKEY] QuickDrop hotkey PRESSED! running={self.quickdrop_running}")
-            if self.quickdrop_running:
-                print("[HOTKEY] Setting quickdrop_stop = True")
-                self.quickdrop_stop = True
-                self.root.after(0, lambda: self.quickdrop_status_var.set("Stopping..."))
-            else:
-                print("[HOTKEY] Starting quickdrop macro")
-                self.quickdrop_stop = False
-                self.quickdrop_running = True
-                self.root.after(0, lambda: self.quickdrop_status_var.set("RUNNING"))
-                self.root.after(0, lambda: self.quickdrop_status_label.config(foreground="orange"))
-                self.root.after(0, lambda: self.show_overlay("Quick Drop started"))
-                threading.Thread(target=self.run_quickdrop_macro, daemon=True).start()
-        finally:
-            self._quickdrop_lock.release()
-
-    def run_quickdrop_macro(self):
-        """
-        Quick drop macro - same as triggernade but NO DISCONNECT
-        Uses right-click context menu -> drop to ground (super fast)
-        """
-        repeat = self.quickdrop_repeat_var.get()
-        cycle = 0
-
-        # Get cook time from triggernade settings (same timing)
-        cook_time = self.trig_m1_hold_var.get() / 1000.0
-
-        print(f"[QUICKDROP] Starting - cook={cook_time}s, repeat={repeat}")
-        print(f"[QUICKDROP] Positions: R:{self.quickdrop_rclick_pos} L:{self.quickdrop_lclick_pos}")
-
-        try:
-            while True:
-                cycle += 1
-                print(f"[QUICKDROP] === Cycle {cycle} ===")
-
-                if self.quickdrop_stop:
-                    print("[QUICKDROP] Stop detected at cycle start")
-                    break
-
-                # ===== COOK: Hold M1 =====
-                print(f"[QUICKDROP] M1 down (cook {cook_time}s)")
-                pynput_mouse.press(pynput.mouse.Button.left)
-                time.sleep(cook_time)
-                pynput_mouse.release(pynput.mouse.Button.left)
-                print("[QUICKDROP] M1 up")
-
-                if self.quickdrop_stop:
-                    break
-
-                # ===== OPEN INVENTORY =====
-                pynput_keyboard.press(pynput.keyboard.Key.tab)
-                time.sleep(0.01)
-                pynput_keyboard.release(pynput.keyboard.Key.tab)
-                print("[QUICKDROP] TAB (inventory)")
-
-                # Almost no delay - super fast
-                time.sleep(0.05)
-
-                if self.quickdrop_stop:
-                    break
-
-                # ===== RIGHT-CLICK on item (context menu) =====
-                rx, ry = self.quickdrop_rclick_pos
-                pynput_mouse.position = (rx, ry)
-                time.sleep(0.01)
-                pynput_mouse.press(pynput.mouse.Button.right)
-                time.sleep(0.01)
-                pynput_mouse.release(pynput.mouse.Button.right)
-                print(f"[QUICKDROP] Right-click at ({rx}, {ry})")
-
-                # Tiny delay for context menu
-                time.sleep(0.02)
-
-                # ===== LEFT-CLICK "Drop to Ground" =====
-                lx, ly = self.quickdrop_lclick_pos
-                pynput_mouse.position = (lx, ly)
-                time.sleep(0.01)
-                pynput_mouse.press(pynput.mouse.Button.left)
-                time.sleep(0.01)
-                pynput_mouse.release(pynput.mouse.Button.left)
-                print(f"[QUICKDROP] Left-click at ({lx}, {ly})")
-
-                if self.quickdrop_stop:
-                    break
-
-                # ===== CLOSE INVENTORY =====
-                time.sleep(0.02)
-                pynput_keyboard.press(pynput.keyboard.Key.esc)
-                time.sleep(0.01)
-                pynput_keyboard.release(pynput.keyboard.Key.esc)
-                print("[QUICKDROP] ESC (close inventory)")
-
-                # No delay after closing
-                time.sleep(0.02)
-
-                if self.quickdrop_stop:
-                    break
-
-                # Check repeat
-                if not repeat:
-                    print("[QUICKDROP] Single run complete")
-                    break
-
-                print(f"[QUICKDROP] Cycle {cycle} complete, repeating...")
-
-        finally:
-            self.quickdrop_running = False
-            self.quickdrop_stop = False
-            self.root.after(0, lambda: self.quickdrop_status_var.set("Ready"))
-            self.root.after(0, lambda: self.quickdrop_status_label.config(foreground="gray"))
-            self.root.after(0, lambda: self.show_overlay("Quick Drop stopped."))
-
     def on_mine_hotkey(self):
         """Toggle mine dupe macro"""
-        if not self._mine_lock.acquire(blocking=False):
-            return  # Already processing, ignore duplicate
-        try:
-            print(f"[HOTKEY] Mine hotkey PRESSED! running={self.mine_running}")
-            if self.mine_running:
-                print("[HOTKEY] Setting mine_stop = True")
-                self.mine_stop = True
-                self.root.after(0, lambda: self.mine_status_var.set("Stopping..."))
-            else:
-                print("[HOTKEY] Starting mine macro")
-                # Reset ALL stop flags so vsleep doesn't exit early
-                self.mine_stop = False
-                self.triggernade_stop = False
-                self.espam_stop = False
-                self.mine_running = True
-                self.root.after(0, lambda: self.mine_status_var.set("RUNNING"))
-                self.root.after(0, lambda: self.mine_status_label.config(foreground="orange"))
-                self.root.after(0, lambda: self.show_overlay("Mine Dupe started"))
-                threading.Thread(target=self.run_mine_macro, daemon=True).start()
-        finally:
-            self._mine_lock.release()
+        print(f"[HOTKEY] Mine hotkey PRESSED! running={self.mine_running}")
+        if self.mine_running:
+            print("[HOTKEY] Setting mine_stop = True")
+            self.mine_stop = True
+            self.root.after(0, lambda: self.mine_status_var.set("Stopping..."))
+        else:
+            print("[HOTKEY] Starting mine macro")
+            self.mine_stop = False
+            self.mine_running = True
+            self.root.after(0, lambda: self.mine_status_var.set("RUNNING"))
+            self.root.after(0, lambda: self.mine_status_label.config(foreground="orange"))
+            self.root.after(0, lambda: self.show_overlay("Mine Dupe started"))
+            threading.Thread(target=self.run_mine_macro, daemon=True).start()
 
     def run_mine_macro(self):
         """
@@ -3700,95 +3347,121 @@ class QuickDupeApp:
                 # Read all timing values ONCE at cycle start
                 cook_time = self.mine_cook_var.get()
                 dc_delay = self.mine_dc_delay_var.get()
+                x_hold_ms = self.mine_x_hold_var.get()
                 click_delay = self.mine_click_delay_var.get()
                 dupe_click_hold = self.mine_pickup_hold_var.get()
                 e_delay = self.mine_e_delay_var.get()
                 loop_delay = self.mine_loop_delay_var.get()
-                tab_hold = self.mine_tab_hold_var.get()
-                close_reconnect = self.mine_close_reconnect_var.get()
-                pre_close = self.mine_pre_close_var.get()
-                print(f"[{cycle}] Timings: cook={cook_time}, dc_delay={dc_delay}, click_delay={click_delay}, dupe_hold={dupe_click_hold}")
+                print(f"[{cycle}] Timings: cook={cook_time}, dc_delay={dc_delay}, x_hold={x_hold_ms}, click_delay={click_delay}, dupe_hold={dupe_click_hold}")
 
-                # Removed cycle overlay - was causing Windows beep
-                # self.root.after(0, lambda c=cycle: self.show_overlay(f"Mine {c}"))
+                self.root.after(0, lambda c=cycle: self.show_overlay(f"Mine {c}"))
 
-                # ===== YOUR EXACT SEQUENCE (from your successful recordings) =====
-                # Key insight: TAB and DC happen WHILE still holding M1 (cooking)
-
-                # Clean state
+                # ===== M1 hold (place mine / cook time) =====
+                # Clean state - release everything first
                 pynput_mouse.release(MouseButton.left)
-                self.vsleep(50)
+                self.vsleep(100)
+                pynput_mouse.release(MouseButton.left)  # Double release to be sure
+                self.vsleep(100)
 
-                # 1. M1 PRESS (start cooking mine)
-                print(f"[{cycle}] M1 press - cooking for {cook_time}ms...")
+                print(f"[{cycle}] Cooking for {cook_time}ms...")
                 pynput_mouse.press(MouseButton.left)
-
-                # 2. Cook time: wait before TAB press (open inventory while still holding M1!)
                 self.vsleep(cook_time)
-                pynput_keyboard.press(Key.tab)
-                print(f"[{cycle}] TAB press after {cook_time}ms cook (inventory opening, M1 still held)")
+                pynput_mouse.release(MouseButton.left)
+                self.vsleep(50)  # Small delay after release
+                print(f"[{cycle}] Cook done")
 
-                # 3. DC delay: wait before DC (while still holding M1!)
+                if self.mine_stop:
+                    break
+
+                # ===== TAB to open inventory =====
+                pynput_keyboard.press(Key.tab)
+
+                # ===== Delay before DC (recording: 151ms) =====
+                dc_delay = self.mine_dc_delay_var.get()
                 self.vsleep(dc_delay)
+
+                # ===== Disconnect (outbound only) =====
                 start_packet_drop(inbound=False)
                 is_disconnected = True
-                print(f"[{cycle}] DC started after {dc_delay}ms (M1 still held)")
+                print(f"[{cycle}] Disconnected (outbound only)")
 
-                # 4. ~24ms later: TAB release
-                self.vsleep(24)
+                self.vsleep(63)  # 63ms after DC, TAB release (recording)
                 pynput_keyboard.release(Key.tab)
-                print(f"[{cycle}] TAB release")
-
-                # 5. ~326ms later: M1 release
-                self.vsleep(326)
-                pynput_mouse.release(MouseButton.left)
-                print(f"[{cycle}] M1 release - cook done")
+                print(f"[{cycle}] Inventory opened")
 
                 if self.mine_stop:
                     break
 
-                # 6. Start drag (with variance)
-                self.vsleep(200 + random.randint(0, 100))  # 200-300ms wait
-                pynput_mouse.position = self.mine_drag_start
-                self.vsleep(30 + random.randint(0, 20))
-                pynput_mouse.press(MouseButton.left)
+                self.vsleep(30)  # 30ms
 
-                # 7. Drag with varied speed
-                drag_speed = self.mine_drag_speed_var.get()
-                varied_speed = drag_speed + random.randint(-2, 2)  # Vary speed slightly
-                self.curved_drag(self.mine_drag_start, self.mine_drag_end, steps=25, step_delay=max(3, varied_speed))
-                pynput_mouse.release(MouseButton.left)
-                print(f"[{cycle}] Drag complete")
+                # ===== Drop item =====
+                if self.use_drag_drop_var.get():
+                    # Drag drop using pynput
+                    pynput_mouse.release(MouseButton.left)
+                    pynput_mouse.position = self.mine_drag_start
+                    self.vsleep(30)
+
+                    pynput_mouse.press(MouseButton.left)
+                    self.vsleep(80)
+
+                    # Smooth drag
+                    start_x, start_y = self.mine_drag_start
+                    end_x, end_y = self.mine_drag_end
+                    dx = end_x - start_x
+                    dy = end_y - start_y
+                    steps = 20
+                    for i in range(1, steps + 1):
+                        t = i / steps
+                        x = int(start_x + dx * t)
+                        y = int(start_y + dy * t)
+                        pynput_mouse.position = (x, y)
+                        self.vsleep(7)
+
+                    pynput_mouse.release(MouseButton.left)
+                    print(f"[{cycle}] Dropped with drag")
+                else:
+                    # Xbox X button using ViGEmBus
+                    x_hold_ms = self.mine_x_hold_var.get()
+                    pynput_mouse.position = self.mine_slot_pos  # Move to slot position
+                    self.vsleep(20)
+                    gp = get_gamepad()
+                    if gp:
+                        gp.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+                        gp.update()
+                        self.vsleep(x_hold_ms)
+                        gp.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+                        gp.update()
+                        print(f"[{cycle}] Dropped with Xbox X ({x_hold_ms}ms)")
 
                 if self.mine_stop:
                     break
 
-                # 8. TAB close after drag
-                self.vsleep(pre_close)
+                # ===== TAB close inventory =====
+                self.vsleep(100)
                 pynput_keyboard.press(Key.tab)
-                self.vsleep(tab_hold)
+                self.vsleep(70)
                 pynput_keyboard.release(Key.tab)
-                print(f"[{cycle}] Inventory closed (pre_close={pre_close}, tab_hold={tab_hold})")
+                print(f"[{cycle}] Inventory closed")
 
                 if self.mine_stop:
                     break
 
-                # 9. Wait then RECONNECT
-                self.vsleep(close_reconnect)
+                # ===== Reconnect =====
+                self.vsleep(940)  # ~940ms after closing inventory
                 stop_packet_drop()
                 is_disconnected = False
                 print(f"[{cycle}] Reconnected")
 
-                # 10. Wait then M1 click (uses click_delay slider)
-                time.sleep(click_delay / 1000.0)
+                # ===== M1 click to complete dupe =====
+                click_delay = self.mine_click_delay_var.get()
+                self.vsleep(click_delay)
                 dupe_click_hold = self.mine_pickup_hold_var.get()
+                pynput_mouse.release(MouseButton.left)  # Clean state
                 pynput_mouse.press(MouseButton.left)
-                print(f"[{cycle}] M1 press after {click_delay}ms (holding {dupe_click_hold}ms)")
-
-                # 11. Hold for dupe - use direct sleep, no variance/interruption
-                time.sleep(dupe_click_hold / 1000.0)
+                print(f"[{cycle}] M1 pressed, holding {dupe_click_hold}ms...")
+                self.vsleep(dupe_click_hold)
                 pynput_mouse.release(MouseButton.left)
-                print(f"[{cycle}] M1 release after {dupe_click_hold}ms hold")
+                print(f"[{cycle}] M1 released")
                 print(f"[{cycle}] CYCLE DONE")
 
                 if not repeat:
@@ -3810,33 +3483,12 @@ class QuickDupeApp:
                 if self.mine_stop:
                     break
 
-                # Mouse nudge FIRST to avoid mines stacking
-                if self.mine_nudge_var.get():
-                    nudge_px = self.mine_nudge_px_var.get()
-                    class MOUSEINPUT(ctypes.Structure):
-                        _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong),
-                                    ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
-                    class INPUT(ctypes.Structure):
-                        _fields_ = [("type", ctypes.c_ulong), ("mi", MOUSEINPUT)]
-                    MOUSEEVENTF_MOVE = 0x0001
-                    inp = INPUT(type=0, mi=MOUSEINPUT(dx=nudge_px, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_MOVE, time=0, dwExtraInfo=None))
-                    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
-                    print(f"[{cycle}] Nudged mouse {nudge_px}px right")
-
                 # Q to swap back to mine in quick use
                 self.vsleep(100)
-                if self.mine_reselect_var.get():
-                    q_mode = self.mine_q_mode_var.get()
-                    if q_mode == "radial":
-                        # Use direction-based radial selection
-                        self._play_mine_q_radial()
-                        print(f"[{cycle}] Q radial reselect ({self.mine_q_direction_var.get()})")
-                    else:
-                        # Simple Q tap
-                        pynput_keyboard.press('q')
-                        self.vsleep(50)
-                        pynput_keyboard.release('q')
-                        print(f"[{cycle}] Q tap to reselect")
+                pynput_keyboard.press('q')
+                self.vsleep(50)
+                pynput_keyboard.release('q')
+                print(f"[{cycle}] Pressed Q to swap back")
 
                 # Wait before next cycle (scales with variance slider - more extreme)
                 loop_delay_ms = self.mine_loop_delay_var.get()
@@ -3857,27 +3509,19 @@ class QuickDupeApp:
 
     def on_espam_hotkey(self):
         """Toggle E-spam macro"""
-        if not self._espam_lock.acquire(blocking=False):
-            return  # Already processing, ignore duplicate
-        try:
-            print(f"[HOTKEY] E-Spam hotkey PRESSED! running={self.espam_running}")
-            if self.espam_running:
-                print("[HOTKEY] Setting espam_stop = True")
-                self.espam_stop = True
-                self.root.after(0, lambda: self.espam_status_var.set("Stopping..."))
-            else:
-                print("[HOTKEY] Starting E-spam macro")
-                # Reset ALL stop flags so vsleep doesn't exit early
-                self.espam_stop = False
-                self.mine_stop = False
-                self.triggernade_stop = False
-                self.espam_running = True
-                self.root.after(0, lambda: self.espam_status_var.set("SPAMMING E"))
-                self.root.after(0, lambda: self.espam_status_label.config(foreground="green"))
-                self.root.after(0, lambda: self.show_overlay("E-Spam running..."))
-                threading.Thread(target=self.run_espam_macro, daemon=True).start()
-        finally:
-            self._espam_lock.release()
+        print(f"[HOTKEY] E-Spam hotkey PRESSED! running={self.espam_running}")
+        if self.espam_running:
+            print("[HOTKEY] Setting espam_stop = True")
+            self.espam_stop = True
+            self.root.after(0, lambda: self.espam_status_var.set("Stopping..."))
+        else:
+            print("[HOTKEY] Starting E-spam macro")
+            self.espam_stop = False
+            self.espam_running = True
+            self.root.after(0, lambda: self.espam_status_var.set("SPAMMING E"))
+            self.root.after(0, lambda: self.espam_status_label.config(foreground="green"))
+            self.root.after(0, lambda: self.show_overlay("E-Spam running..."))
+            threading.Thread(target=self.run_espam_macro, daemon=True).start()
 
     def run_espam_macro(self):
         """E-Spam macro - spams E with configurable repeat delay"""
@@ -3887,19 +3531,23 @@ class QuickDupeApp:
         # Brief delay so starting hotkey doesn't trigger stop
         time.sleep(0.2)
 
-        repeat_delay_ms = self.espam_repeat_delay_var.get()  # now in ms
+        repeat_delay = self.espam_repeat_delay_var.get()  # seconds
 
         try:
             while not self.espam_stop:
-                # Spam E
+                # Spam E rapidly
                 kb.press('e')
                 self.vsleep(11)
                 kb.release('e')
                 self.vsleep(50)
 
                 # If repeat delay > 0, pause between spam bursts
-                if repeat_delay_ms > 0 and not self.espam_stop:
-                    self.vsleep(repeat_delay_ms)
+                if repeat_delay > 0 and not self.espam_stop:
+                    # Wait for repeat delay (check stop flag periodically)
+                    waited = 0
+                    while waited < repeat_delay and not self.espam_stop:
+                        self.vsleep(100)
+                        waited += 0.1
         finally:
             self.espam_running = False
             self.espam_stop = False
@@ -3907,29 +3555,236 @@ class QuickDupeApp:
             self.root.after(0, lambda: self.espam_status_label.config(foreground="gray"))
             self.root.after(0, lambda: self.show_overlay("E-Spam stopped."))
 
-    def show_overlay(self, text, force=False):
-        if not force and not self.show_overlay_var.get():
+    def on_untitled1_hotkey(self):
+        """Toggle Ammo macro"""
+        print(f"[HOTKEY] Untitled1 hotkey PRESSED! running={self.untitled1_running}")
+        if self.untitled1_running:
+            print("[HOTKEY] Setting untitled1_stop = True")
+            self.untitled1_stop = True
+            self.root.after(0, lambda: self.untitled1_status_var.set("Stopping..."))
+        else:
+            print("[HOTKEY] Starting Ammo")
+            self.untitled1_stop = False
+            self.untitled1_running = True
+            self.root.after(0, lambda: self.untitled1_status_var.set("RUNNING"))
+            self.root.after(0, lambda: self.untitled1_status_label.config(foreground="orange"))
+            self.root.after(0, lambda: self.show_overlay("Ammo started"))
+            threading.Thread(target=self.run_untitled1_macro, daemon=True).start()
+
+    def _smooth_move(self, target_pos, steps=8):
+        """Smooth mouse movement to target position with variance"""
+        current = pynput_mouse.position
+        start_x, start_y = current
+        end_x, end_y = target_pos
+        dx = end_x - start_x
+        dy = end_y - start_y
+        for i in range(1, steps + 1):
+            t = i / steps
+            x = int(start_x + dx * t)
+            y = int(start_y + dy * t)
+            pynput_mouse.position = (x, y)
+            self.vsleep(2)  # ~2ms per step with variance
+
+    def run_untitled1_macro(self):
+        """
+        Ammo:
+        1. TAB open
+        2. DC outbound
+        3. Move to weapon slot + right click
+        4. Click context menu
+        5. M1 drag to inventory slot
+        6. Wait 300ms
+        7. Reconnect
+        8. Double click on inventory slot
+        9. TAB close
+        10. Press 1
+        11. Wait 500ms
+        12. Repeat
+        """
+        repeat = self.untitled1_repeat_var.get()
+        is_disconnected = False
+        cycle = 0
+
+        # Release all keys/buttons before starting
+        pynput_mouse.release(MouseButton.left)
+        pynput_mouse.release(MouseButton.right)
+        pynput_keyboard.release(Key.tab)
+        pynput_keyboard.release('1')
+
+        hotkey = self.untitled1_hotkey_var.get()
+        time.sleep(0.2)  # Brief delay so hotkey doesn't trigger stop
+
+        try:
+            while True:
+                if self.untitled1_stop:
+                    print("[UNTITLED1] Stop detected at cycle start")
+                    break
+                if hotkey and keyboard.is_pressed(hotkey):
+                    print("[UNTITLED1] Hotkey pressed - stopping")
+                    self.untitled1_stop = True
+                    break
+
+                cycle += 1
+                print(f"\n{'='*50}")
+                print(f"UNTITLED #1 CYCLE {cycle}")
+                print(f"{'='*50}")
+
+                self.root.after(0, lambda c=cycle: self.show_overlay(f"Ammo - {c}"))
+
+                # Get all timing values
+                tab_hold = self.um1_tab_hold_var.get()
+                after_tab_open = self.um1_after_tab_open_var.get()
+                rclick_hold = self.um1_rclick_hold_var.get()
+                after_rclick = self.um1_after_rclick_var.get()
+                after_dc = self.um1_after_dc_var.get()
+                context_hold = self.um1_context_hold_var.get()
+                after_context = self.um1_after_context_var.get()
+                after_reconnect = self.um1_after_reconnect_var.get()
+                dblclick_hold = self.um1_dblclick_hold_var.get()
+                dblclick_gap = self.um1_dblclick_gap_var.get()
+                after_dblclick = self.um1_after_dblclick_var.get()
+                after_tab_close = self.um1_after_tab_close_var.get()
+                equip_hold = self.um1_equip_hold_var.get()
+                loop_delay = self.um1_loop_delay_var.get()
+
+                # ===== 1. TAB to open inventory =====
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(tab_hold)
+                pynput_keyboard.release(Key.tab)
+                self.vsleep(after_tab_open)
+                print(f"[{cycle}] Inventory opened")
+
+                if self.untitled1_stop: break
+
+                # ===== 2. Disconnect outbound =====
+                start_packet_drop(inbound=False)
+                is_disconnected = True
+                self.vsleep(after_dc)
+                print(f"[{cycle}] Disconnected outbound")
+
+                if self.untitled1_stop: break
+
+                # ===== 3. Move to weapon slot and right click =====
+                self._smooth_move(self.um1_item_pos)
+                pynput_mouse.press(MouseButton.right)
+                self.vsleep(rclick_hold)
+                pynput_mouse.release(MouseButton.right)
+                self.vsleep(after_rclick)
+                print(f"[{cycle}] Right clicked weapon at {self.um1_item_pos}")
+
+                if self.untitled1_stop: break
+
+                # ===== 4. Move to context menu and left click =====
+                self._smooth_move(self.um1_context_pos)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(context_hold)
+                pynput_mouse.release(MouseButton.left)
+                self.vsleep(after_context)
+                print(f"[{cycle}] Clicked context menu at {self.um1_context_pos}")
+
+                if self.untitled1_stop: break
+
+                # ===== 5. Drag item from drag_start to drag_end =====
+                self._smooth_move(self.um1_drag_start)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(80)  # Hold before drag
+                # Smooth drag with variance
+                start_x, start_y = self.um1_drag_start
+                end_x, end_y = self.um1_drag_end
+                dx = end_x - start_x
+                dy = end_y - start_y
+                steps = 15
+                for i in range(1, steps + 1):
+                    t = i / steps
+                    x = int(start_x + dx * t)
+                    y = int(start_y + dy * t)
+                    pynput_mouse.position = (x, y)
+                    self.vsleep(5)  # ~5ms per step with variance
+                pynput_mouse.release(MouseButton.left)
+                print(f"[{cycle}] Dragged item {self.um1_drag_start} → {self.um1_drag_end}")
+
+                if self.untitled1_stop: break
+
+                # ===== 6. Wait 300ms before reconnect =====
+                self.vsleep(300)
+                print(f"[{cycle}] Waited 300ms before reconnect")
+
+                if self.untitled1_stop: break
+
+                # ===== 7. Reconnect =====
+                stop_packet_drop()
+                is_disconnected = False
+                self.vsleep(after_reconnect)
+                print(f"[{cycle}] Reconnected")
+
+                if self.untitled1_stop: break
+
+                # ===== 8. Double click at drag_end (transfer back) =====
+                self._smooth_move(self.um1_drag_end)
+                # First click
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(dblclick_hold)
+                pynput_mouse.release(MouseButton.left)
+                # Small gap with tiny variance (keeps it a double click)
+                time.sleep((dblclick_gap + random.uniform(-3, 3)) / 1000.0)
+                # Second click
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(dblclick_hold)
+                pynput_mouse.release(MouseButton.left)
+                self.vsleep(after_dblclick)
+                print(f"[{cycle}] Double clicked at {self.um1_drag_end}")
+
+                if self.untitled1_stop: break
+
+                # ===== 9. TAB to close inventory =====
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(tab_hold)
+                pynput_keyboard.release(Key.tab)
+                self.vsleep(after_tab_close)
+                print(f"[{cycle}] Inventory closed")
+
+                if self.untitled1_stop: break
+
+                # ===== 10. Press 1 to equip =====
+                pynput_keyboard.press('1')
+                self.vsleep(equip_hold)
+                pynput_keyboard.release('1')
+                print(f"[{cycle}] Pressed 1 to equip")
+
+                print(f"[{cycle}] CYCLE DONE")
+
+                if not repeat:
+                    print(f"[{cycle}] Single cycle done")
+                    break
+
+                if self.untitled1_stop: break
+
+                # Wait before next cycle
+                if loop_delay > 0:
+                    self.vsleep(loop_delay)
+
+        finally:
+            pynput_mouse.release(MouseButton.left)
+            pynput_mouse.release(MouseButton.right)
+            pynput_keyboard.release(Key.tab)
+            pynput_keyboard.release('1')
+            if is_disconnected:
+                stop_packet_drop()
+            self.untitled1_running = False
+            self.untitled1_stop = False
+            self.root.after(0, lambda: self.untitled1_status_var.set("Ready"))
+            self.root.after(0, lambda: self.untitled1_status_label.config(foreground="gray"))
+            self.root.after(0, lambda: self.show_overlay("Ammo stopped."))
+
+    def show_overlay(self, text):
+        if not self.show_overlay_var.get():
             return
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
             self.overlay_window = tk.Toplevel(self.root)
             self.overlay_window.overrideredirect(True)
             self.overlay_window.attributes('-topmost', True)
             self.overlay_window.attributes('-transparentcolor', 'black')
-            self.overlay_window.attributes('-disabled', True)  # Prevent focus steal
             self.overlay_window.configure(bg='black')
-            self.overlay_window.bell = lambda: None  # Disable bell on overlay
-            self.overlay_window.bind('<Key>', lambda e: 'break')  # Eat all key events to prevent beep
-
-            # Windows: Set WS_EX_NOACTIVATE to prevent focus stealing
-            self.overlay_window.update_idletasks()
-            hwnd = ctypes.windll.user32.GetParent(self.overlay_window.winfo_id())
-            GWL_EXSTYLE = -20
-            WS_EX_NOACTIVATE = 0x08000000
-            WS_EX_APPWINDOW = 0x00040000
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = style | WS_EX_NOACTIVATE
-            style = style & ~WS_EX_APPWINDOW  # Also hide from taskbar
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
 
             # Use canvas for text with outline
             self.overlay_canvas = tk.Canvas(self.overlay_window, bg='black', highlightthickness=0)
@@ -3976,9 +3831,10 @@ class QuickDupeApp:
             self.overlay_window.withdraw()
 
     def on_close(self):
+        self.throwable_stop = True
+        self.keydoor_stop = True
         self.triggernade_stop = True
         self.espam_stop = True
-        self.mine_stop = True
 
         # ALWAYS ensure network is restored on close
         try:
@@ -3992,6 +3848,16 @@ class QuickDupeApp:
         if self.drag_mouse_listener:
             try:
                 self.drag_mouse_listener.stop()
+            except:
+                pass
+        if self.dc_hotkey_registered:
+            try:
+                keyboard.remove_hotkey(self.dc_hotkey_registered)
+            except:
+                pass
+        if self.throwable_hotkey_registered:
+            try:
+                keyboard.remove_hotkey(self.throwable_hotkey_registered)
             except:
                 pass
         if self.triggernade_hotkey_registered:
@@ -4014,9 +3880,6 @@ class QuickDupeApp:
 
 
 if __name__ == "__main__":
-    # Obfuscation: rename exe to UUID name on first run (if enabled)
-    rename_self_and_restart()
-
     # Make app DPI-aware so mouse coordinates are consistent
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
@@ -4030,14 +3893,23 @@ if __name__ == "__main__":
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
         sys.exit()
 
+    # Rename exe to unique UUID name on first run
+    rename_self_and_restart()
+
     print("=" * 50)
     print(f"{APP_NAME} Starting...")
-    if OBFUSCATION_ENABLED:
-        print(f"[OBFUS] Build ID: {BUILD_ID}")
+    print(f"Build ID: {BUILD_ID}")
+
+    # Initialize gamepad once at startup
+    init_gamepad()
     print("=" * 50)
 
     root = tk.Tk()
     app = QuickDupeApp(root)
+
+    # Auto-enable drag drop if ViGEmBus failed
+    if get_gamepad() is None:
+        app.auto_enable_drag_drop_if_no_vigembus()
 
     # Apply stay-on-top setting from config
     if app.config.get("stay_on_top", False):
@@ -4045,6 +3917,8 @@ if __name__ == "__main__":
         print("[UI] Stay on top enabled from config")
 
     print(f"[CONFIG] Loaded config: {app.config}")
+    print(f"[CONFIG] Keydoor hotkey: '{app.dc_hotkey_var.get()}'")
+    print(f"[CONFIG] Throwable hotkey: '{app.throwable_hotkey_var.get()}'")
 
     app.register_hotkeys()
     print("[STARTUP] Ready - listening for hotkeys")

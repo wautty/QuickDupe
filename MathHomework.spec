@@ -1,17 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import vgamepad
 import pydivert
 
+vgamepad_path = os.path.dirname(vgamepad.__file__)
 pydivert_path = os.path.dirname(pydivert.__file__)
 
 a = Analysis(
     ['quickdupe.py'],
     pathex=[],
     binaries=[('WinDivert.dll', '.'), ('WinDivert64.sys', '.')],
-    datas=[('icon.ico', '.'), ('icon.png', '.'), (pydivert_path, 'pydivert'),
-           ('NONE.png', '.'), ('N.png', '.'), ('NE.png', '.'), ('E.png', '.'),
-           ('SE.png', '.'), ('S.png', '.'), ('SW.png', '.')],
-    hiddenimports=['pynput', 'pynput.keyboard', 'pynput.mouse', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'pynput._util', 'pynput._util.win32', 'pydivert'],
+    datas=[('icon.ico', '.'), ('icon.png', '.'), ('ViGEmBus_1.22.0_x64_x86_arm64.exe', '.'), (vgamepad_path, 'vgamepad'), (pydivert_path, 'pydivert')],
+    hiddenimports=['pynput', 'pynput.keyboard', 'pynput.mouse', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'pynput._util', 'pynput._util.win32', 'vgamepad', 'pydivert'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -27,7 +27,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='QuickDupe',
+    name='QD',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

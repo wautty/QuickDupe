@@ -1,0 +1,122 @@
+{
+  "total_duration_ms": 13525.024,
+  "total_events": 16,
+  "events": [
+    {
+      "type": "key_press",
+      "key": "q",
+      "timestamp_ms": 753.376,
+      "action": "press"
+    },
+    {
+      "type": "key_release",
+      "key": "q",
+      "timestamp_ms": 1850.984,
+      "action": "release",
+      "held_duration_ms": 1097.608,
+      "orphan": false
+    },
+    {
+      "type": "key_press",
+      "key": "alt_l",
+      "timestamp_ms": 3127.138,
+      "action": "press"
+    },
+    {
+      "type": "key_press",
+      "key": "tab",
+      "timestamp_ms": 3347.469,
+      "action": "press"
+    },
+    {
+      "type": "key_release",
+      "key": "tab",
+      "timestamp_ms": 3449.007,
+      "action": "release",
+      "held_duration_ms": 101.538,
+      "orphan": false
+    },
+    {
+      "type": "key_release",
+      "key": "alt_l",
+      "timestamp_ms": 4476.236,
+      "action": "release",
+      "held_duration_ms": 1349.098,
+      "orphan": false
+    },
+    {
+      "type": "key_press",
+      "key": "ctrl_l",
+      "timestamp_ms": 8423.11,
+      "action": "press"
+    },
+    {
+      "type": "mouse_press",
+      "button": "left",
+      "x": 1847,
+      "y": 1888,
+      "timestamp_ms": 8437.96,
+      "action": "press"
+    },
+    {
+      "type": "key_press",
+      "key": "\u0003",
+      "timestamp_ms": 8553.502,
+      "action": "press"
+    },
+    {
+      "type": "mouse_release",
+      "button": "left",
+      "x": 1847,
+      "y": 1887,
+      "timestamp_ms": 8608.908,
+      "action": "release",
+      "held_duration_ms": 170.947,
+      "orphan": false
+    },
+    {
+      "type": "key_release",
+      "key": "\u0003",
+      "timestamp_ms": 8708.443,
+      "action": "release",
+      "held_duration_ms": 154.942,
+      "orphan": false
+    },
+    {
+      "type": "key_press",
+      "key": "\u0003",
+      "timestamp_ms": 9067.204,
+      "action": "press"
+    },
+    {
+      "type": "key_release",
+      "key": "\u0003",
+      "timestamp_ms": 9203.356,
+      "action": "release",
+      "held_duration_ms": 136.152,
+      "orphan": false
+    },
+    {
+      "type": "key_press",
+      "key": "\u0003",
+      "timestamp_ms": 10587.387,
+      "action": "press"
+    },
+    {
+      "type": "key_release",
+      "key": "\u0003",
+      "timestamp_ms": 10724.278,
+      "action": "release",
+      "held_duration_ms": 136.891,
+      "orphan": false
+    },
+    {
+      "type": "key_release",
+      "key": "ctrl_l",
+      "timestamp_ms": 11148.202,
+      "action": "release",
+      "held_duration_ms": 2725.092,
+      "orphan": false
+    }
+  ]
+}

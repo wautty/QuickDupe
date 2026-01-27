@@ -1,0 +1,23 @@
+Macro Recording Summary
+=======================
+Total Duration: 13525.024ms (13.53s)
+Total Events: 16
+
+Event Log:
+--------------------------------------------------------------------------------
+   753.376ms | KEY DOWN   | q
+  1850.984ms | KEY UP     | q (held 1097.608ms)
+  3127.138ms | KEY DOWN   | alt_l
+  3347.469ms | KEY DOWN   | tab
+  3449.007ms | KEY UP     | tab (held 101.538ms)
+  4476.236ms | KEY UP     | alt_l (held 1349.098ms)
+  8423.110ms | KEY DOWN   | ctrl_l
+  8437.960ms | MOUSE DOWN | left at (1847, 1888)
+  8553.502ms | KEY DOWN   | 
+  8608.908ms | MOUSE UP   | left at (1847, 1887) (held 170.947ms)
+  8708.443ms | KEY UP     |  (held 154.942ms)
+  9067.204ms | KEY DOWN   | 
+  9203.356ms | KEY UP     |  (held 136.152ms)
+ 10587.387ms | KEY DOWN   | 
+ 10724.278ms | KEY UP     |  (held 136.891ms)
+ 11148.202ms | KEY UP     | ctrl_l (held 2725.092ms)
