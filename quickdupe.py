@@ -964,14 +964,19 @@ class QuickDupeApp:
         self.trig_drag_btn.pack(side='left')
         self.trig_drag_var = tk.StringVar()
         # Load triggernade positions (slot + drop to ground)
-        trig_slot = self.config.get("trig_slot_pos", [3024, 669])
-        trig_drop = self.config.get("trig_drop_pos", [3024, 750])
-        self.trig_slot_pos = tuple(trig_slot)
-        self.trig_drop_pos = tuple(trig_drop)
+        trig_slot = self.config.get("trig_slot_pos", None)
+        trig_drop = self.config.get("trig_drop_pos", None)
+        self.trig_slot_pos = tuple(trig_slot) if trig_slot else None
+        self.trig_drop_pos = tuple(trig_drop) if trig_drop else None
         # Legacy drag positions (kept for compatibility)
-        self.trig_drag_start = tuple(self.config.get("trig_drag_start", [3024, 669]))
-        self.trig_drag_end = tuple(self.config.get("trig_drag_end", [550, 1247]))
-        self.trig_drag_var.set(f"Slot:{trig_slot} Drop:{trig_drop}")
+        trig_drag_s = self.config.get("trig_drag_start", None)
+        trig_drag_e = self.config.get("trig_drag_end", None)
+        self.trig_drag_start = tuple(trig_drag_s) if trig_drag_s else None
+        self.trig_drag_end = tuple(trig_drag_e) if trig_drag_e else None
+        if trig_slot and trig_drop:
+            self.trig_drag_var.set(f"Slot:{list(trig_slot)} Drop:{list(trig_drop)}")
+        else:
+            self.trig_drag_var.set("Not recorded - click Record first")
         ttk.Label(trig_drag_frame, textvariable=self.trig_drag_var, font=("Consolas", 8)).pack(side='left', padx=5)
 
         # Repeat checkbox
@@ -1030,9 +1035,16 @@ class QuickDupeApp:
         self.create_slider(frame, "Time between M1s:", "trig_throw_delay", 100, 10, 500, "ms")
         self.create_slider(frame, "Reconnect after M1 #:", "trig_reconnect_after", 1, 1, 20, "")
         self.create_slider(frame, "Wait before E spam:", "wait_before_espam", 0, 0, 2000, "ms")
-        self.create_slider(frame, "E spam duration:", "espam_duration", 1000, 0, 5000, "ms")
+        self.create_slider(frame, "E spam duration:", "espam_duration", 250, 0, 5000, "ms")
         self.create_slider(frame, "M1s before E interweave:", "trig_m1_before_interweave", 1, 0, 20, "")
         self.create_slider(frame, "Wait before next cycle:", "wait_before_cycle", 100, 0, 2000, "ms")
+
+        # Wolfpack loop settings header
+        ttk.Label(frame, text="─ Wolfpack Loop Settings ─", font=("Arial", 9, "bold")).pack(pady=(10, 5))
+        self.create_slider(frame, "Loop M1 hold:", "wolfpack_m1_hold", 20, 10, 200, "ms")
+        self.create_slider(frame, "Loop M1 gap:", "wolfpack_m1_gap", 20, 10, 200, "ms")
+        self.create_slider(frame, "Loop DC hold:", "wolfpack_dc_hold", 20, 10, 500, "ms")
+        self.create_slider(frame, "Loop DC gap:", "wolfpack_dc_gap", 600, 100, 3000, "ms")
 
         trig_btn_frame = ttk.Frame(frame)
         trig_btn_frame.pack(pady=5)
@@ -2776,6 +2788,11 @@ class QuickDupeApp:
         self.config["trig_m1_hold"] = self.trig_m1_hold_var.get()
         self.config["trig_m2_hold"] = self.trig_m2_hold_var.get()
         self.config["trig_dc_delay"] = self.trig_dc_delay_var.get()
+        # Wolfpack loop settings
+        self.config["wolfpack_m1_hold"] = self.wolfpack_m1_hold_var.get()
+        self.config["wolfpack_m1_gap"] = self.wolfpack_m1_gap_var.get()
+        self.config["wolfpack_dc_hold"] = self.wolfpack_dc_hold_var.get()
+        self.config["wolfpack_dc_gap"] = self.wolfpack_dc_gap_var.get()
         # Mine settings
         self.config["mine_hotkey"] = self.mine_hotkey_var.get()
         self.config["mine_repeat"] = self.mine_repeat_var.get()
@@ -2814,7 +2831,7 @@ class QuickDupeApp:
     def reset_triggernade_defaults(self):
         """Reset all triggernade timing parameters to defaults (from working recording)"""
         self.wait_before_espam_var.set(0)  # E spam starts during M1 spam (interleaved)
-        self.espam_duration_var.set(1000)  # ~1 second of E spam
+        self.espam_duration_var.set(250)  # E spam duration
         self.wait_before_cycle_var.set(100)
         self.trig_dc_throws_var.set(10)  # 10 M1s after reconnect
         self.trig_throw_delay_var.set(100)  # ~100ms between M1s
@@ -2824,7 +2841,12 @@ class QuickDupeApp:
         self.trig_drag_speed_var.set(8)  # Drag speed
         self.trig_dc_delay_var.set(10)  # Delay before DC
         self.trig_m1_before_interweave_var.set(1)  # 1 M1 before E interweave
-        self.triggernade_q_spam_var.set(False)  # Q spam disabled by default (not needed with interleaved E)
+        self.triggernade_q_spam_var.set(False)  # Q spam disabled by default
+        # Wolfpack loop settings
+        self.wolfpack_m1_hold_var.set(20)
+        self.wolfpack_m1_gap_var.set(20)
+        self.wolfpack_dc_hold_var.set(20)
+        self.wolfpack_dc_gap_var.set(600)
         # Note: Positions are NOT reset - only timing parameters
         self.save_settings()
         print("[RESET] Triggernade parameters reset to defaults (positions preserved)")
@@ -2915,8 +2937,12 @@ class QuickDupeApp:
             "espam_duration": self.espam_duration_var.get(),
             "trig_m1_before_interweave": self.trig_m1_before_interweave_var.get(),
             "wait_before_cycle": self.wait_before_cycle_var.get(),
-            "trig_slot_pos": list(self.trig_slot_pos),
-            "trig_drop_pos": list(self.trig_drop_pos),
+            "trig_slot_pos": list(self.trig_slot_pos) if self.trig_slot_pos else None,
+            "trig_drop_pos": list(self.trig_drop_pos) if self.trig_drop_pos else None,
+            "wolfpack_m1_hold": self.wolfpack_m1_hold_var.get(),
+            "wolfpack_m1_gap": self.wolfpack_m1_gap_var.get(),
+            "wolfpack_dc_hold": self.wolfpack_dc_hold_var.get(),
+            "wolfpack_dc_gap": self.wolfpack_dc_gap_var.get(),
         }
 
     def _set_triggernade_settings(self, data):
@@ -2935,13 +2961,18 @@ class QuickDupeApp:
         if "espam_duration" in data: self.espam_duration_var.set(data["espam_duration"])
         if "trig_m1_before_interweave" in data: self.trig_m1_before_interweave_var.set(data["trig_m1_before_interweave"])
         if "wait_before_cycle" in data: self.wait_before_cycle_var.set(data["wait_before_cycle"])
-        if "trig_slot_pos" in data:
+        if "trig_slot_pos" in data and data["trig_slot_pos"]:
             self.trig_slot_pos = tuple(data["trig_slot_pos"])
             self.config["trig_slot_pos"] = data["trig_slot_pos"]
-        if "trig_drop_pos" in data:
+        if "trig_drop_pos" in data and data["trig_drop_pos"]:
             self.trig_drop_pos = tuple(data["trig_drop_pos"])
             self.config["trig_drop_pos"] = data["trig_drop_pos"]
+        if self.trig_slot_pos and self.trig_drop_pos:
             self.trig_drag_var.set(f"Slot:{list(self.trig_slot_pos)} Drop:{list(self.trig_drop_pos)}")
+        if "wolfpack_m1_hold" in data: self.wolfpack_m1_hold_var.set(data["wolfpack_m1_hold"])
+        if "wolfpack_m1_gap" in data: self.wolfpack_m1_gap_var.set(data["wolfpack_m1_gap"])
+        if "wolfpack_dc_hold" in data: self.wolfpack_dc_hold_var.set(data["wolfpack_dc_hold"])
+        if "wolfpack_dc_gap" in data: self.wolfpack_dc_gap_var.set(data["wolfpack_dc_gap"])
         self.save_settings()
 
     def _get_mine_settings(self):
@@ -3263,12 +3294,28 @@ class QuickDupeApp:
 
     def run_triggernade_macro(self):
         """
-        Triggernade dupe macro - from recording
-        Drag coordinates are for user's resolution - may need adjustment
+        Triggernade/Wolfpack macro
+        Initial setup runs once, then wolfpack loop repeats if auto-loop enabled
         """
         repeat = self.triggernade_repeat_var.get()
         is_disconnected = False
-        cycle = 0
+        dc_key = None  # Initialize for finally block
+
+        # Validate positions are recorded
+        if not self.trig_drag_start or not self.trig_drag_end:
+            self.root.after(0, lambda: self.show_overlay("Record drag positions first!", force=True))
+            self.triggernade_running = False
+            self.root.after(0, lambda: self.triggernade_status_var.set("Ready"))
+            self.root.after(0, lambda: self.triggernade_status_label.config(foreground="gray"))
+            return
+
+        # Validate DC Both hotkey is set if looping is enabled
+        if repeat and not self.dc_both_hotkey_var.get():
+            self.root.after(0, lambda: self.show_overlay("Set DC Both hotkey to use Wolfpack loop!", force=True))
+            self.triggernade_running = False
+            self.root.after(0, lambda: self.triggernade_status_var.set("Ready"))
+            self.root.after(0, lambda: self.triggernade_status_label.config(foreground="gray"))
+            return
 
         print(f"[TRIGGERNADE] Using positions: {self.trig_drag_start} → {self.trig_drag_end}")
 
@@ -3280,234 +3327,183 @@ class QuickDupeApp:
         pynput_keyboard.release('q')
         pynput_keyboard.release(Key.tab)
 
-        # Get the hotkey for direct checking
-        hotkey = self.triggernade_hotkey_var.get()
-
         # Brief delay so starting hotkey doesn't trigger stop
         time.sleep(0.2)
 
         try:
-            while True:
-                # Check stop flag AND direct key press as backup
-                if self.triggernade_stop:
-                    print("[TRIGGERNADE] Stop detected at cycle start")
-                    break
-                if hotkey and keyboard.is_pressed(hotkey):
-                    print("[TRIGGERNADE] Hotkey pressed directly - stopping")
-                    self.triggernade_stop = True
-                    break
+            # ===== INITIAL SETUP (runs once) =====
+            print(f"\n{'='*50}")
+            print(f"INITIAL SETUP")
+            print(f"{'='*50}")
 
-                cycle += 1
-                import random
+            # ===== Left click throw (configurable) =====
+            m1_hold = self.trig_m1_hold_var.get()
+            m2_hold = self.trig_m2_hold_var.get()
 
-                # Print params at start
-                print(f"\n{'='*50}")
-                print(f"RUN {cycle}")
-                print(f"{'='*50}")
+            pynput_mouse.press(MouseButton.left)
+            self.vsleep(m1_hold)
 
-                self.root.after(0, lambda c=cycle: self.show_overlay(f"Run {c}"))
+            # ===== Right click during throw (configurable) =====
+            pynput_mouse.press(MouseButton.right)
+            self.vsleep(m2_hold)
+            pynput_mouse.release(MouseButton.right)
+            print(f"Throw (M1:{m1_hold}ms) + M2:{m2_hold}ms")
 
-                # ===== Left click throw (configurable) =====
-                m1_hold = self.trig_m1_hold_var.get()
-                m2_hold = self.trig_m2_hold_var.get()
+            pynput_mouse.release(MouseButton.left)
 
-                pynput_mouse.press(MouseButton.left)
-                self.vsleep(m1_hold)
+            # ===== Delay before disconnect =====
+            dc_delay = self.trig_dc_delay_var.get()
+            if dc_delay > 0:
+                self.vsleep(dc_delay)
 
-                # ===== Right click during throw (configurable) =====
-                pynput_mouse.press(MouseButton.right)
-                self.vsleep(m2_hold)
-                pynput_mouse.release(MouseButton.right)
-                print(f"[{cycle}] Throw (M1:{m1_hold}ms) + M2:{m2_hold}ms")
+            if self.triggernade_stop:
+                return
 
-                pynput_mouse.release(MouseButton.left)
+            # ===== Disconnect (outbound only for triggernade) =====
+            start_packet_drop(inbound=False)
+            is_disconnected = True
+            self.vsleep(51)
+            print(f"Disconnected (outbound only)")
 
-                # ===== E key 11ms =====
+            if self.triggernade_stop:
+                return
+
+            # ===== TAB to open inventory 51ms =====
+            self.vsleep(20)
+            pynput_keyboard.press(Key.tab)
+            self.vsleep(301)
+            pynput_keyboard.release(Key.tab)
+            print(f"Inventory opened")
+
+            if self.triggernade_stop:
+                return
+
+            # ===== Wait then drop via curved drag =====
+            self.vsleep(120)
+            pynput_mouse.release(MouseButton.left)
+            pynput_mouse.position = self.trig_drag_start
+            self.vsleep(30)
+            pynput_mouse.press(MouseButton.left)
+            self.vsleep(50)
+            drag_speed = self.trig_drag_speed_var.get()
+            self.curved_drag(self.trig_drag_start, self.trig_drag_end, steps=25, step_delay=drag_speed)
+            pynput_mouse.release(MouseButton.left)
+            print(f"Dropped with curved drag")
+
+            if self.triggernade_stop:
+                return
+
+            # ===== Wait then TAB close =====
+            self.vsleep(self.drag_wait_after)
+
+            pynput_keyboard.press(Key.tab)
+            self.vsleep(51)
+            pynput_keyboard.release(Key.tab)
+            print(f"Inventory closed")
+
+            if self.triggernade_stop:
+                return
+
+            # ===== Reconnect =====
+            stop_packet_drop()
+            is_disconnected = False
+            print(f"Reconnected - Initial setup complete")
+
+            # ===== E spam + clicking to grab the falling object =====
+            # Fast burst to reliably grab the dropped item
+            print(f"Grabbing falling object...")
+            for _ in range(15):  # 15 fast cycles (~450ms total)
                 pynput_keyboard.press('e')
-                self.vsleep(11)
+                time.sleep(0.005)
                 pynput_keyboard.release('e')
-                print(f"[{cycle}] E pressed")
-
-                # ===== Delay before disconnect =====
-                dc_delay = self.trig_dc_delay_var.get()
-                if dc_delay > 0:
-                    self.vsleep(dc_delay)
-
-                # ===== Disconnect (outbound only for triggernade) =====
-                start_packet_drop(inbound=False)
-                is_disconnected = True
-                self.vsleep(51)
-                print(f"[{cycle}] Disconnected (outbound only)")
-
-                if self.triggernade_stop:
-                    break
-
-                # ===== TAB to open inventory 51ms =====
-                self.vsleep(20)
-                pynput_keyboard.press(Key.tab)
-                self.vsleep(301)
-                pynput_keyboard.release(Key.tab)
-                print(f"[{cycle}] Inventory opened")
-
-                if self.triggernade_stop:
-                    break
-
-                # ===== Wait then drop via curved drag =====
-                self.vsleep(120)  # Wait for inventory to open
-                pynput_mouse.release(MouseButton.left)
-                pynput_mouse.position = self.trig_drag_start
-                self.vsleep(30)
                 pynput_mouse.press(MouseButton.left)
-                self.vsleep(50)
-                drag_speed = self.trig_drag_speed_var.get()
-                self.curved_drag(self.trig_drag_start, self.trig_drag_end, steps=25, step_delay=drag_speed)
+                time.sleep(0.015)
                 pynput_mouse.release(MouseButton.left)
-                print(f"[{cycle}] Dropped with curved drag")
+                time.sleep(0.010)
+            print(f"Starting wolfpack loop!")
 
-                if self.triggernade_stop:
-                    break
+            # ===== WOLFPACK LOOP SECTION =====
+            # G Hub macro pattern: click spam + periodic DC for ~186ms
+            # One loop = ~8 clicks (~1000ms) + DC for ~186ms while clicking + reconnect
+            # Only checks stop flag at END of each loop iteration
 
-                # ===== Wait then TAB close =====
-                self.vsleep(self.drag_wait_after)
+            # Get user's DC Both hotkey and convert to pynput key
+            dc_hotkey_str = self.dc_both_hotkey_var.get()
+            special_keys = {
+                'shift': Key.shift, 'ctrl': Key.ctrl, 'alt': Key.alt,
+                'space': Key.space, 'enter': Key.enter, 'tab': Key.tab,
+                'backspace': Key.backspace, 'delete': Key.delete,
+                'esc': Key.esc, 'escape': Key.esc,
+                'up': Key.up, 'down': Key.down, 'left': Key.left, 'right': Key.right,
+                'home': Key.home, 'end': Key.end, 'page_up': Key.page_up, 'page_down': Key.page_down,
+                'insert': Key.insert, 'pause': Key.pause,
+                'f1': Key.f1, 'f2': Key.f2, 'f3': Key.f3, 'f4': Key.f4,
+                'f5': Key.f5, 'f6': Key.f6, 'f7': Key.f7, 'f8': Key.f8,
+                'f9': Key.f9, 'f10': Key.f10, 'f11': Key.f11, 'f12': Key.f12,
+            }
+            dc_key = special_keys.get(dc_hotkey_str.lower(), dc_hotkey_str) if dc_hotkey_str else None
 
-                pynput_keyboard.press(Key.tab)
-                self.vsleep(51)
-                pynput_keyboard.release(Key.tab)
-                print(f"[{cycle}] Inventory closed")
+            if not dc_key:
+                print("[WOLFPACK] ERROR: No DC Both hotkey configured!")
+                return
 
-                if self.triggernade_stop:
-                    break
+            print(f"[WOLFPACK] Using DC hotkey: {dc_hotkey_str}")
 
-                # ===== Wait 300ms then M1 spam =====
-                self.vsleep(300)
+            # Get timing from UI vars (in ms), convert to seconds
+            m1_hold = self.wolfpack_m1_hold_var.get() / 1000.0
+            m1_gap = self.wolfpack_m1_gap_var.get() / 1000.0
+            dc_hold = self.wolfpack_dc_hold_var.get() / 1000.0
+            dc_gap = self.wolfpack_dc_gap_var.get() / 1000.0
 
-                # Get configurable values
-                total_throws = self.trig_dc_throws_var.get()
-                base_delay = self.trig_throw_delay_var.get()
-                reconnect_after = self.trig_reconnect_after_var.get()
-                m1_before_interweave = self.trig_m1_before_interweave_var.get()
+            print(f"[WOLFPACK] M1: {m1_hold*1000:.0f}ms hold, {m1_gap*1000:.0f}ms gap")
+            print(f"[WOLFPACK] DC: {dc_hold*1000:.0f}ms hold, {dc_gap*1000:.0f}ms gap")
 
-                # Generate balanced varied delays for phase 1 (total stays same)
-                phase1_delays = self.vary_balanced(base_delay, m1_before_interweave)
-
-                # Clamp reconnect_after to be within valid range
-                reconnect_after = min(reconnect_after, total_throws)
-                print(f"[{cycle}] M1 spam: {total_throws} throws, reconnect after #{reconnect_after}, E interweave after #{m1_before_interweave}")
-
-                # ===== M1 spam with reconnect, then interleaved E+M1 =====
-                # Phase 1: M1s before E interweave
-                for i in range(m1_before_interweave):
-                    if self.triggernade_stop:
-                        break
-
-                    delay = phase1_delays[i]
+            # Continuous click thread
+            click_running = [True]
+            def click_loop():
+                while click_running[0]:
                     pynput_mouse.press(MouseButton.left)
-                    self.vsleep(delay / 2)
+                    time.sleep(m1_hold)
                     pynput_mouse.release(MouseButton.left)
+                    time.sleep(m1_gap)
 
-                    # Reconnect after specified throw number
-                    if i + 1 == reconnect_after and is_disconnected:
-                        self.vsleep(21)
-                        stop_packet_drop()
-                        is_disconnected = False
-                        print(f"[{cycle}] Reconnected after M1 #{i+1}")
-                        self.vsleep(59)  # Wait after reconnect before next M1
-                    else:
-                        self.vsleep(delay / 2)
+            click_thread = threading.Thread(target=click_loop, daemon=True)
+            click_thread.start()
 
-                # Safety: ensure we're reconnected
-                if is_disconnected:
+            # Even DC cycle
+            while True:
+                pynput_keyboard.press(dc_key)
+                is_disconnected = True
+                time.sleep(dc_hold)
+                pynput_keyboard.release(dc_key)
+                is_disconnected = False
+
+                if self.triggernade_stop:
+                    click_running[0] = False
+                    # Ensure reconnected - release DC key and force stop packet drop
+                    pynput_keyboard.release(dc_key)
+                    time.sleep(0.1)
                     stop_packet_drop()
                     is_disconnected = False
-
-                if self.triggernade_stop:
                     break
 
-                # Phase 2: Interleaved E spam + M1 throws (like the recording)
-                # E every ~22ms, M1 every ~100ms = about 4-5 E's per M1
-                remaining_throws = max(0, total_throws - m1_before_interweave)
-                print(f"[{cycle}] Interleaved E+M1: {remaining_throws} more M1s with E spam")
-
-                for i in range(remaining_throws):
-                    if self.triggernade_stop:
-                        break
-
-                    # M1 throw
-                    pynput_mouse.press(MouseButton.left)
-
-                    # E spam during M1 hold (~50ms hold, fit 2 E's)
-                    for _ in range(2):
-                        pynput_keyboard.press('e')
-                        self.vsleep(6)
-                        pynput_keyboard.release('e')
-                        self.vsleep(16)
-
-                    pynput_mouse.release(MouseButton.left)
-
-                    # E spam between M1s (~50ms gap, fit 2-3 E's)
-                    for _ in range(2):
-                        if self.triggernade_stop:
-                            break
-                        pynput_keyboard.press('e')
-                        self.vsleep(6)
-                        pynput_keyboard.release('e')
-                        self.vsleep(16)
-
-                if self.triggernade_stop:
-                    break
-
-                print(f"[{cycle}] CYCLE DONE")
-
-                # Phase 3: Continue E spam for pickup
-                espam_duration_ms = self.espam_duration_var.get()
-                wait_before_cycle_ms = self.wait_before_cycle_var.get()
-                espam_iterations = max(1, espam_duration_ms // 22)
-                print(f"[{cycle}] E spam for {espam_duration_ms}ms...")
-                for _ in range(espam_iterations):
-                    if self.triggernade_stop:
-                        break
-                    pynput_keyboard.press('e')
-                    self.vsleep(6)
-                    pynput_keyboard.release('e')
-                    self.vsleep(16)  # ~22ms per E press
-
-                # If single cycle (not repeat), skip Q spam and exit
-                if not repeat:
-                    print(f"[{cycle}] Single cycle done - E pickup complete")
-                    break
-
-                if self.triggernade_stop:
-                    break
-
-                # Q spam to ready next throw (optional)
-                if self.triggernade_q_spam_var.get():
-                    for _ in range(5):
-                        pynput_keyboard.press('q')
-                        self.vsleep(11)
-                        pynput_keyboard.release('q')
-                        self.vsleep(11)
-                    print(f"[{cycle}] Q spam done")
-                else:
-                    print(f"[{cycle}] Q spam skipped")
-
-                # Wait before next cycle (configurable)
-                if wait_before_cycle_ms > 0:
-                    cycle_wait_iterations = max(1, wait_before_cycle_ms // 50)
-                    print(f"[{cycle}] Waiting {wait_before_cycle_ms}ms before next cycle...")
-                    for _ in range(cycle_wait_iterations):
-                        if self.triggernade_stop:
-                            break
-                        self.vsleep(50)
-
+                time.sleep(dc_gap)
 
         finally:
             # Release ALL buttons and keys
-            pynput_mouse.release(MouseButton.left)  # ctypes left mouse
+            pynput_mouse.release(MouseButton.left)
             pynput_mouse.release(MouseButton.left)
             pynput_mouse.release(MouseButton.right)
             pynput_keyboard.release('e')
             pynput_keyboard.release('q')
             pynput_keyboard.release(Key.tab)
+
+            # Release DC hotkey if it was set and pressed
+            if dc_key is not None:
+                try:
+                    pynput_keyboard.release(dc_key)
+                except Exception:
+                    pass
 
             if is_disconnected:
                 stop_packet_drop()
@@ -3515,7 +3511,7 @@ class QuickDupeApp:
             self.triggernade_stop = False
             self.root.after(0, lambda: self.triggernade_status_var.set("Ready"))
             self.root.after(0, lambda: self.triggernade_status_label.config(foreground="gray"))
-            self.root.after(0, lambda: self.show_overlay("Wolfpack/Triggernade stopped."))
+            self.root.after(0, lambda: self.show_overlay("Wolfpack stopped."))
 
     def on_quickdrop_hotkey(self):
         """Toggle quick drop macro (no DC version)"""
@@ -4014,40 +4010,46 @@ class QuickDupeApp:
 
 
 if __name__ == "__main__":
-    # Obfuscation: rename exe to UUID name on first run (if enabled)
-    rename_self_and_restart()
-
-    # Make app DPI-aware so mouse coordinates are consistent
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
-    except:
+        # Obfuscation: rename exe to UUID name on first run (if enabled)
+        rename_self_and_restart()
+
+        # Make app DPI-aware so mouse coordinates are consistent
         try:
-            ctypes.windll.user32.SetProcessDPIAware()  # Fallback
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
         except:
-            pass
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # Fallback
+            except:
+                pass
 
-    if not is_admin():
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-        sys.exit()
+        if not is_admin():
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+            sys.exit()
 
-    print("=" * 50)
-    print(f"{APP_NAME} Starting...")
-    if OBFUSCATION_ENABLED:
-        print(f"[OBFUS] Build ID: {BUILD_ID}")
-    print("=" * 50)
+        print("=" * 50)
+        print(f"{APP_NAME} Starting...")
+        if OBFUSCATION_ENABLED:
+            print(f"[OBFUS] Build ID: {BUILD_ID}")
+        print("=" * 50)
 
-    root = tk.Tk()
-    app = QuickDupeApp(root)
+        root = tk.Tk()
+        app = QuickDupeApp(root)
 
-    # Apply stay-on-top setting from config
-    if app.config.get("stay_on_top", False):
-        root.attributes('-topmost', True)
-        print("[UI] Stay on top enabled from config")
+        # Apply stay-on-top setting from config
+        if app.config.get("stay_on_top", False):
+            root.attributes('-topmost', True)
+            print("[UI] Stay on top enabled from config")
 
-    print(f"[CONFIG] Loaded config: {app.config}")
+        print(f"[CONFIG] Loaded config: {app.config}")
 
-    app.register_hotkeys()
-    print("[STARTUP] Ready - listening for hotkeys")
-    print("=" * 50)
+        app.register_hotkeys()
+        print("[STARTUP] Ready - listening for hotkeys")
+        print("=" * 50)
 
-    root.mainloop()
+        root.mainloop()
+    except Exception as e:
+        import traceback
+        print(f"CRASH ERROR: {e}")
+        traceback.print_exc()
+        input("Press Enter to exit...")
