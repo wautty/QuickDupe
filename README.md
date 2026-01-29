@@ -59,3 +59,13 @@ pyinstaller QuickDupe.spec
 
 - Press ESC to stop all macros
 - Triggernade drop position can be recorded for your screen resolution
+
+### 1.5.2 Notes:
+In order to build/launch 1.5.2 you will need to download the following PNG files to the same directory as script:
+`N.png`
+`NE.png`
+`E.png`
+`SE.png`
+`S.png`
+`SW.png`
+`NONE.png`
