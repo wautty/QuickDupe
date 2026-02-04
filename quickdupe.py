@@ -800,7 +800,7 @@ class QuickDupeApp:
                             ],
                         },
                     )
-                ],
+                ], # pyright: ignore[reportArgumentType]
             )
         except:
             pass  # Already created
