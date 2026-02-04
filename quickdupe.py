@@ -426,6 +426,16 @@ class QuickDupeApp:
         self.edrop_stop = False
         self.edrop_hotkey_registered = None
         self.recording_edrop = False
+        # E-Drop E-First variant state
+        self.edrop_efirst_running = False
+        self.edrop_efirst_hotkey_registered = None
+        self.recording_edrop_efirst = False
+        # Key Card Glitch state
+        self.keycard_running = False
+        self.keycard_stop = False
+        self.keycard_hotkey_registered = None
+        self.recording_keycard = False
+        self.recording_keycard_pos = False
         # Stop All state
         self.recording_stop = False
         # Quick disconnect state
@@ -442,6 +452,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_mine = False
         self.recording_espam = False
+        self.recording_keycard = False
         self.recording_drag = False
         self._recording_previous_value = None  # Store previous value for ESC cancel
         self._drag_recording_cancelled = False  # For ESC cancel of drag recordings
@@ -454,6 +465,7 @@ class QuickDupeApp:
         self._triggernade_lock = threading.Lock()
         self._quickdrop_lock = threading.Lock()
         self._espam_lock = threading.Lock()
+        self._keycard_lock = threading.Lock()
 
         # Overlay
         self.overlay_window = None
@@ -785,7 +797,7 @@ class QuickDupeApp:
         # Scrollbar styling - use 'alt' theme element (no grip lines)
         try:
             style.element_create("NoGrip.Scrollbar.thumb", "from", "alt")
-            style.layout(  # type: ignore
+            style.layout(
                 "NoGrip.Vertical.TScrollbar",
                 [
                     (
@@ -800,7 +812,7 @@ class QuickDupeApp:
                             ],
                         },
                     )
-                ], # pyright: ignore[reportArgumentType]
+                ],
             )
         except:
             pass  # Already created
@@ -2161,11 +2173,143 @@ class QuickDupeApp:
 
         ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
 
-        # ===== E-DROP COLLECTION SECTION =====
+        # ===== KEY CARD GLITCH SECTION =====
+        keycard_header = ttk.Frame(frame)
+        keycard_header.pack(pady=(5, 5))
+        ttk.Label(
+            keycard_header, text="── Key Card Glitch ──", style="Header.TLabel"
+        ).pack(side="left")
+        keycard_info = ttk.Label(
+            keycard_header,
+            text=" (?)",
+            foreground=self.colors["text_dim"],
+            cursor="hand2",
+        )
+        keycard_info.pack(side="left")
+        self._add_tooltip(
+            keycard_info,
+            "1. Stand at locked door\n2. DC\n3. Drop keycard (queued while offline)\n4. Spam E (while offline)\n5. Reconnect\n6. Spam E FAST (during 2-5s reconnection delay)\n\n→ Door unlocks + keycard duplicates on ground",
+        )
+
+        keycard_hk = ttk.Frame(frame)
+        keycard_hk.pack(fill="x", padx=10, pady=5)
+        ttk.Label(keycard_hk, text="Hotkey:").pack(side="left")
+        self.keycard_hotkey_var = tk.StringVar(value=self.config.get("keycard_hotkey", ""))
+        self.keycard_hotkey_entry = tk.Entry(
+            keycard_hk,
+            textvariable=self.keycard_hotkey_var,
+            width=15,
+            state="readonly",
+            bd=0,
+            highlightthickness=0,
+            bg=self.colors["bg_light"],
+            fg=self.colors["text"],
+            readonlybackground=self.colors["bg_light"],
+        )
+        self.keycard_hotkey_entry.pack(side="left", padx=5)
+        self.keycard_record_btn = ttk.Button(
+            keycard_hk, text="Set", width=6, command=self.start_recording_keycard
+        )
+        self.keycard_record_btn.pack(side="left", padx=5)
+
+        # Key Card Position Recording (right-click + drop menu)
+        keycard_pos_frame = ttk.Frame(frame)
+        keycard_pos_frame.pack(fill="x", padx=10, pady=2)
+        self.keycard_pos_btn = ttk.Button(
+            keycard_pos_frame,
+            text="Record Positions",
+            width=16,
+            command=self.start_keycard_pos_recording,
+        )
+        self.keycard_pos_btn.pack(side="left")
+        self.keycard_pos_var = tk.StringVar()
+        # Load positions (right-click on item, then left-click on drop)
+        keycard_rclick = self.config.get("keycard_rclick_pos", [0, 0])
+        keycard_drop = self.config.get("keycard_drop_pos", [0, 0])
+        self.keycard_rclick_pos = tuple(keycard_rclick)
+        self.keycard_drop_pos = tuple(keycard_drop)
+        self.keycard_pos_var.set(f"RClick:{keycard_rclick} Drop:{keycard_drop}")
+        ttk.Label(
+            keycard_pos_frame, textvariable=self.keycard_pos_var, font=("Consolas", 8)
+        ).pack(side="left", padx=5)
+
+        # Key Card Glitch Timings
+        self.create_slider(
+            frame, "DC wait time:", "keycard_dc_wait", 100, 50, 500, "ms"
+        )
+        self.create_slider(
+            frame, "Inventory open delay:", "keycard_inv_delay", 300, 100, 1000, "ms"
+        )
+        self.create_slider(
+            frame, "Right-click delay:", "keycard_rclick_delay", 100, 50, 300, "ms"
+        )
+        self.create_slider(
+            frame, "Drop click delay:", "keycard_drop_delay", 150, 50, 500, "ms"
+        )
+        self.create_slider(
+            frame, "E-spam (offline) duration:", "keycard_offline_espam_duration", 2000, 500, 4000, "ms"
+        )
+        self.create_slider(
+            frame, "Reconnect E-spam duration:", "keycard_espam_duration", 3000, 2000, 6000, "ms"
+        )
+        self.create_slider(
+            frame, "E-spam speed (delay):", "keycard_espam_delay", 50, 30, 200, "ms"
+        )
+
+        self.keycard_status_var = tk.StringVar(value="Ready")
+        self.keycard_status_label = ttk.Label(
+            frame, textvariable=self.keycard_status_var, style="Dim.TLabel"
+        )
+        self.keycard_status_label.pack(pady=5)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
+
+        # ===== E-DROP POSITION RECORDING (SHARED) =====
+        edrop_shared_header = ttk.Frame(frame)
+        edrop_shared_header.pack(pady=(5, 5))
+        ttk.Label(
+            edrop_shared_header, text="── E-Drop Position (Shared) ──", style="Header.TLabel"
+        ).pack(side="left")
+        edrop_shared_info = ttk.Label(
+            edrop_shared_header,
+            text=" (?)",
+            foreground=self.colors["text_dim"],
+            cursor="hand2",
+        )
+        edrop_shared_info.pack(side="left")
+        self._add_tooltip(
+            edrop_shared_info,
+            "Record inventory positions for E-Drop.\nUsed by BOTH DC→E and E→DC variants.\n\nRight-click on item → Left-click 'Drop' option.",
+        )
+
+        # Position Recording (shared between both variants)
+        edrop_pos_frame = ttk.Frame(frame)
+        edrop_pos_frame.pack(fill="x", padx=10, pady=5)
+        self.edrop_pos_btn = ttk.Button(
+            edrop_pos_frame,
+            text="Record Positions",
+            width=16,
+            command=self.start_edrop_pos_recording,
+        )
+        self.edrop_pos_btn.pack(side="left")
+        self.edrop_pos_var = tk.StringVar()
+        # Load positions
+        edrop_rclick = self.config.get("edrop_rclick_pos", [0, 0])
+        edrop_drop = self.config.get("edrop_drop_pos", [0, 0])
+        self.edrop_rclick_pos = tuple(edrop_rclick)
+        self.edrop_drop_pos = tuple(edrop_drop)
+        self.edrop_pos_var.set(f"RClick:{edrop_rclick} Drop:{edrop_drop}")
+        ttk.Label(
+            edrop_pos_frame, textvariable=self.edrop_pos_var, font=("Consolas", 8)
+        ).pack(side="left", padx=5)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
+
+        # ===== E-DROP (DC→E) SECTION =====
         edrop_header = ttk.Frame(frame)
         edrop_header.pack(pady=(5, 5))
         ttk.Label(
-            edrop_header, text="── E-Drop Collection ──", style="Header.TLabel"
+            edrop_header, text="── E-Drop (DC→E) ──", style="Header.TLabel"
         ).pack(side="left")
         edrop_info = ttk.Label(
             edrop_header,
@@ -2176,10 +2320,10 @@ class QuickDupeApp:
         edrop_info.pack(side="left")
         self._add_tooltip(
             edrop_info,
-            "Disconnect → Press E → Right-click item → Drop → Reconnect\n\nUseful for collecting items with disconnect protection.",
+            "Disconnect → Wait → Press E → Inventory → Drop → Reconnect\n\nDC FIRST variant (newer, recommended).",
         )
 
-        # E-Drop Hotkey
+        # Hotkey
         edrop_hk = ttk.Frame(frame)
         edrop_hk.pack(fill="x", padx=10, pady=5)
         ttk.Label(edrop_hk, text="Hotkey:").pack(side="left")
@@ -2201,27 +2345,6 @@ class QuickDupeApp:
         )
         self.edrop_record_btn.pack(side="left", padx=5)
 
-        # E-Drop Position Recording
-        edrop_pos_frame = ttk.Frame(frame)
-        edrop_pos_frame.pack(fill="x", padx=10, pady=2)
-        self.edrop_pos_btn = ttk.Button(
-            edrop_pos_frame,
-            text="Record Positions",
-            width=16,
-            command=self.start_edrop_pos_recording,
-        )
-        self.edrop_pos_btn.pack(side="left")
-        self.edrop_pos_var = tk.StringVar()
-        # Load positions
-        edrop_rclick = self.config.get("edrop_rclick_pos", [0, 0])
-        edrop_drop = self.config.get("edrop_drop_pos", [0, 0])
-        self.edrop_rclick_pos = tuple(edrop_rclick)
-        self.edrop_drop_pos = tuple(edrop_drop)
-        self.edrop_pos_var.set(f"RClick:{edrop_rclick} Drop:{edrop_drop}")
-        ttk.Label(
-            edrop_pos_frame, textvariable=self.edrop_pos_var, font=("Consolas", 8)
-        ).pack(side="left", padx=5)
-
         # Repeat checkbox
         self.edrop_repeat_var = tk.BooleanVar(
             value=self.config.get("edrop_repeat", False)
@@ -2233,7 +2356,28 @@ class QuickDupeApp:
             command=self.save_settings,
         ).pack(anchor="w", padx=10, pady=5)
 
-        # E-Drop Timings
+        # DC Mode Selection
+        edrop_dc_frame = ttk.Frame(frame)
+        edrop_dc_frame.pack(fill="x", padx=10, pady=5)
+        ttk.Label(edrop_dc_frame, text="Disconnect Mode:").pack(anchor="w")
+        self.edrop_dc_mode_var = tk.StringVar(
+            value=self.config.get("edrop_dc_mode", "both")
+        )
+        dc_modes = [("Both (In+Out)", "both"), ("Outbound", "outbound"), ("Inbound", "inbound")]
+        for text, mode in dc_modes:
+            ttk.Radiobutton(
+                edrop_dc_frame,
+                text=text,
+                variable=self.edrop_dc_mode_var,
+                value=mode,
+                command=self.save_settings,
+            ).pack(anchor="w", padx=20)
+
+        # Timings
+        ttk.Label(frame, text="Timings:", font=("Arial", 9, "bold")).pack(anchor="w", padx=10, pady=(5, 2))
+        self.create_slider(
+            frame, "DC duration:", "edrop_dc_duration", 100, 50, 500, "ms"
+        )
         self.create_slider(
             frame, "Wait before E:", "edrop_wait_before_e", 200, 0, 1000, "ms"
         )
@@ -2258,13 +2402,122 @@ class QuickDupeApp:
         self.create_slider(frame, "Loop delay:", "edrop_loop_delay", 500, 0, 2000, "ms")
 
         ttk.Button(
-            frame, text="Reset E-Drop Defaults", command=self.reset_edrop_defaults
+            frame, text="Reset Defaults", command=self.reset_edrop_defaults
         ).pack(pady=5)
+
         self.edrop_status_var = tk.StringVar(value="Ready")
         self.edrop_status_label = ttk.Label(
             frame, textvariable=self.edrop_status_var, style="Dim.TLabel"
         )
-        self.edrop_status_label.pack(pady=5)
+        self.edrop_status_label.pack(pady=2)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
+
+        # ===== E-DROP (E→DC) SECTION =====
+        edrop_efirst_header = ttk.Frame(frame)
+        edrop_efirst_header.pack(pady=(5, 5))
+        ttk.Label(
+            edrop_efirst_header, text="── E-Drop (E→DC) ──", style="Header.TLabel"
+        ).pack(side="left")
+        edrop_efirst_info = ttk.Label(
+            edrop_efirst_header,
+            text=" (?)",
+            foreground=self.colors["text_dim"],
+            cursor="hand2",
+        )
+        edrop_efirst_info.pack(side="left")
+        self._add_tooltip(
+            edrop_efirst_info,
+            "Press E → Wait → Disconnect → Inventory → Drop → Reconnect\n\nE FIRST variant (legacy method).",
+        )
+
+        # Hotkey
+        edrop_efirst_hk = ttk.Frame(frame)
+        edrop_efirst_hk.pack(fill="x", padx=10, pady=5)
+        ttk.Label(edrop_efirst_hk, text="Hotkey:").pack(side="left")
+        self.edrop_efirst_hotkey_var = tk.StringVar(value=self.config.get("edrop_efirst_hotkey", ""))
+        self.edrop_efirst_hotkey_entry = tk.Entry(
+            edrop_efirst_hk,
+            textvariable=self.edrop_efirst_hotkey_var,
+            width=15,
+            state="readonly",
+            bd=0,
+            highlightthickness=0,
+            bg=self.colors["bg_light"],
+            fg=self.colors["text"],
+            readonlybackground=self.colors["bg_light"],
+        )
+        self.edrop_efirst_hotkey_entry.pack(side="left", padx=5)
+        self.edrop_efirst_record_btn = ttk.Button(
+            edrop_efirst_hk, text="Set", width=6, command=self.start_recording_edrop_efirst
+        )
+        self.edrop_efirst_record_btn.pack(side="left", padx=5)
+
+        # Repeat checkbox
+        self.edrop_efirst_repeat_var = tk.BooleanVar(
+            value=self.config.get("edrop_efirst_repeat", False)
+        )
+        ttk.Checkbutton(
+            frame,
+            text="Auto (loop until pressed again)",
+            variable=self.edrop_efirst_repeat_var,
+            command=self.save_settings,
+        ).pack(anchor="w", padx=10, pady=5)
+
+        # DC Mode Selection
+        edrop_efirst_dc_frame = ttk.Frame(frame)
+        edrop_efirst_dc_frame.pack(fill="x", padx=10, pady=5)
+        ttk.Label(edrop_efirst_dc_frame, text="Disconnect Mode:").pack(anchor="w")
+        self.edrop_efirst_dc_mode_var = tk.StringVar(
+            value=self.config.get("edrop_efirst_dc_mode", "both")
+        )
+        dc_modes = [("Both (In+Out)", "both"), ("Outbound", "outbound"), ("Inbound", "inbound")]
+        for text, mode in dc_modes:
+            ttk.Radiobutton(
+                edrop_efirst_dc_frame,
+                text=text,
+                variable=self.edrop_efirst_dc_mode_var,
+                value=mode,
+                command=self.save_settings,
+            ).pack(anchor="w", padx=20)
+
+        # Timings
+        ttk.Label(frame, text="Timings:", font=("Arial", 9, "bold")).pack(anchor="w", padx=10, pady=(5, 2))
+        self.create_slider(
+            frame, "E press duration:", "edrop_efirst_e_duration", 50, 10, 200, "ms"
+        )
+        self.create_slider(
+            frame, "Wait after E:", "edrop_efirst_wait_after_e", 150, 0, 500, "ms"
+        )
+        self.create_slider(
+            frame, "DC duration:", "edrop_efirst_dc_duration", 100, 50, 500, "ms"
+        )
+        self.create_slider(
+            frame, "Wait before inventory:", "edrop_efirst_wait_before_inv", 100, 0, 500, "ms"
+        )
+        self.create_slider(
+            frame, "Inventory delay:", "edrop_efirst_inv_delay", 150, 50, 500, "ms"
+        )
+        self.create_slider(
+            frame, "Right-click delay:", "edrop_efirst_rclick_delay", 100, 20, 300, "ms"
+        )
+        self.create_slider(
+            frame, "Drop menu delay:", "edrop_efirst_drop_delay", 100, 20, 300, "ms"
+        )
+        self.create_slider(
+            frame, "Wait after reconnect:", "edrop_efirst_reconnect_delay", 200, 50, 1000, "ms"
+        )
+        self.create_slider(frame, "Loop delay:", "edrop_efirst_loop_delay", 500, 0, 2000, "ms")
+
+        ttk.Button(
+            frame, text="Reset Defaults", command=self.reset_edrop_efirst_defaults
+        ).pack(pady=5)
+
+        self.edrop_efirst_status_var = tk.StringVar(value="Ready")
+        self.edrop_efirst_status_label = ttk.Label(
+            frame, textvariable=self.edrop_efirst_status_var, style="Dim.TLabel"
+        )
+        self.edrop_efirst_status_label.pack(pady=2)
 
         ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
 
@@ -2720,7 +2973,7 @@ class QuickDupeApp:
                 new_dir = angle_to_direction(angle)
 
             if new_dir != current_dir[0]:
-                current_dir[0] = new_dir  # type: ignore[assignment]
+                current_dir[0] = new_dir
                 img_key = new_dir if new_dir and new_dir in images else "NONE"
                 canvas.delete("radial")
                 canvas.create_image(
@@ -3729,9 +3982,30 @@ class QuickDupeApp:
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.focus_force()
 
+    def start_recording_keycard(self):
+        self._recording_previous_value = self.keycard_hotkey_var.get()
+        self.recording_keycard = True
+        self.recording_edrop = False
+        self.recording_edrop_efirst = False
+        self.recording_espam = False
+        self.recording_triggernade = False
+        self.recording_quickdrop = False
+        self.recording_mine = False
+        self.recording_dc_both = False
+        self.recording_dc_outbound = False
+        self.recording_dc_inbound = False
+        self.recording_tamper = False
+        self.recording_minimize = False
+        self.recording_tray = False
+        self.keycard_record_btn.config(text="...")
+        self.keycard_hotkey_var.set("Press key...")
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.focus_force()
+
     def start_recording_edrop(self):
         self._recording_previous_value = self.edrop_hotkey_var.get()
         self.recording_edrop = True
+        self.recording_edrop_efirst = False
         self.recording_espam = False
         self.recording_triggernade = False
         self.recording_quickdrop = False
@@ -3744,6 +4018,25 @@ class QuickDupeApp:
         self.recording_tray = False
         self.edrop_record_btn.config(text="...")
         self.edrop_hotkey_var.set("Press key...")
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.focus_force()
+
+    def start_recording_edrop_efirst(self):
+        self._recording_previous_value = self.edrop_efirst_hotkey_var.get()
+        self.recording_edrop_efirst = True
+        self.recording_edrop = False
+        self.recording_espam = False
+        self.recording_triggernade = False
+        self.recording_quickdrop = False
+        self.recording_mine = False
+        self.recording_dc_both = False
+        self.recording_dc_outbound = False
+        self.recording_dc_inbound = False
+        self.recording_tamper = False
+        self.recording_minimize = False
+        self.recording_tray = False
+        self.edrop_efirst_record_btn.config(text="...")
+        self.edrop_efirst_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.focus_force()
 
@@ -3872,6 +4165,85 @@ class QuickDupeApp:
                 print(
                     f"[E-DROP] Positions: RClick:{self.edrop_rclick_pos} Drop:{self.edrop_drop_pos}"
                 )
+                return False  # Stop listener
+
+        listener = mouse.Listener(on_click=on_click)
+        listener.start()
+
+    def start_keycard_pos_recording(self):
+        """Record Key Card positions - 3 sec countdown, then right-click on item, then left-click on drop menu"""
+        print("[KEYCARD] Starting position recording with countdown...")
+        
+        if self.recording_keycard_pos:
+            print("[KEYCARD] Already recording, ignoring...")
+            return  # Already recording
+        
+        self.recording_keycard_pos = True
+        self.keycard_pos_btn.config(text="3...")
+        print("[KEYCARD] Button set to '3...', starting countdown")
+        
+        # Start 3 second countdown
+        self._keycard_countdown(3)
+    
+    def _keycard_countdown(self, seconds_left):
+        """Countdown before starting keycard position recording"""
+        if not self.recording_keycard_pos:
+            print("[KEYCARD] Recording cancelled during countdown")
+            return  # Cancelled
+        
+        if seconds_left > 0:
+            print(f"[KEYCARD] Countdown: {seconds_left}...")
+            self.keycard_pos_btn.config(text=f"{seconds_left}...")
+            self.show_overlay(f"Keycard recording in {seconds_left}...", force=True)
+            self.root.after(1000, lambda: self._keycard_countdown(seconds_left - 1))
+        else:
+            print("[KEYCARD] Countdown complete, starting listener...")
+            # Countdown done - start listening
+            self._start_keycard_listener()
+    
+    def _start_keycard_listener(self):
+        """Actually start the mouse listener for keycard recording"""
+        from pynput import mouse
+
+        self.keycard_pos_btn.config(text="Right-click...")
+        self.show_overlay("RIGHT-CLICK on keycard in inventory", force=True)
+        self._keycard_rclick_pos = None
+
+        def on_click(x, y, button, pressed):
+            if not pressed:
+                return  # Only care about press, not release
+
+            if button == mouse.Button.right and self._keycard_rclick_pos is None:
+                # First: right-click position on keycard
+                self._keycard_rclick_pos = (x, y)
+                self.root.after(
+                    0, lambda: self.keycard_pos_btn.config(text="Left-click...")
+                )
+                self.root.after(
+                    0,
+                    lambda: self.show_overlay("LEFT-CLICK 'Drop' in menu", force=True),
+                )
+                print(f"[KEYCARD] Right-click at {x}, {y}")
+
+            elif button == mouse.Button.left and self._keycard_rclick_pos is not None:
+                # Second: left-click on drop menu option
+                self.keycard_rclick_pos = self._keycard_rclick_pos
+                self.keycard_drop_pos = (x, y)
+                self.config["keycard_rclick_pos"] = list(self.keycard_rclick_pos)
+                self.config["keycard_drop_pos"] = list(self.keycard_drop_pos)
+                save_config(self.config)
+                self.keycard_pos_var.set(
+                    f"RClick:{list(self.keycard_rclick_pos)} Drop:{list(self.keycard_drop_pos)}"
+                )
+                self.root.after(
+                    0, lambda: self.keycard_pos_btn.config(text="Record Positions")
+                )
+                self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
+                print(f"[KEYCARD] Drop menu at {x}, {y}")
+                print(
+                    f"[KEYCARD] Positions: RClick:{self.keycard_rclick_pos} Drop:{self.keycard_drop_pos}"
+                )
+                self.recording_keycard_pos = False
                 return False  # Stop listener
 
         listener = mouse.Listener(on_click=on_click)
@@ -4251,7 +4623,9 @@ class QuickDupeApp:
             and not self.recording_quickdrop
             and not self.recording_mine
             and not self.recording_espam
+            and not self.recording_keycard
             and not self.recording_edrop
+            and not self.recording_edrop_efirst
             and not self.recording_dc_both
             and not self.recording_dc_outbound
             and not self.recording_dc_inbound
@@ -4342,10 +4716,18 @@ class QuickDupeApp:
                 self.espam_hotkey_var.set("")
                 self.espam_record_btn.config(text="Set")
                 self.recording_espam = False
+            elif self.recording_keycard:
+                self.keycard_hotkey_var.set("")
+                self.keycard_record_btn.config(text="Set")
+                self.recording_keycard = False
             elif self.recording_edrop:
                 self.edrop_hotkey_var.set("")
                 self.edrop_record_btn.config(text="Set")
                 self.recording_edrop = False
+            elif self.recording_edrop_efirst:
+                self.edrop_efirst_hotkey_var.set("")
+                self.edrop_efirst_record_btn.config(text="Set")
+                self.recording_edrop_efirst = False
             elif self.recording_stop:
                 self.stop_hotkey_var.set("")
                 self.stop_record_btn.config(text="Set")
@@ -4403,6 +4785,9 @@ class QuickDupeApp:
                 self.quickdrop_hotkey_var,
                 self.mine_hotkey_var,
                 self.espam_hotkey_var,
+                self.keycard_hotkey_var,
+                self.edrop_hotkey_var,
+                self.edrop_efirst_hotkey_var,
                 self.stop_hotkey_var,
                 self.dc_both_hotkey_var,
                 self.dc_outbound_hotkey_var,
@@ -4431,10 +4816,18 @@ class QuickDupeApp:
                 self.espam_hotkey_var.set(hotkey)
                 self.espam_record_btn.config(text="Set")
                 self.recording_espam = False
+            elif self.recording_keycard:
+                self.keycard_hotkey_var.set(hotkey)
+                self.keycard_record_btn.config(text="Set")
+                self.recording_keycard = False
             elif self.recording_edrop:
                 self.edrop_hotkey_var.set(hotkey)
                 self.edrop_record_btn.config(text="Set")
                 self.recording_edrop = False
+            elif self.recording_edrop_efirst:
+                self.edrop_efirst_hotkey_var.set(hotkey)
+                self.edrop_efirst_record_btn.config(text="Set")
+                self.recording_edrop_efirst = False
             elif self.recording_stop:
                 self.stop_hotkey_var.set(hotkey)
                 self.stop_record_btn.config(text="Set")
@@ -4892,6 +5285,14 @@ class QuickDupeApp:
         self.config["wait_before_espam"] = self.wait_before_espam_var.get()
         self.config["espam_duration"] = self.espam_duration_var.get()
         self.config["wait_before_cycle"] = self.wait_before_cycle_var.get()
+        self.config["keycard_hotkey"] = self.keycard_hotkey_var.get()
+        self.config["keycard_dc_wait"] = self.keycard_dc_wait_var.get()
+        self.config["keycard_inv_delay"] = self.keycard_inv_delay_var.get()
+        self.config["keycard_drop_delay"] = self.keycard_drop_delay_var.get()
+        self.config["keycard_close_delay"] = self.keycard_close_delay_var.get()
+        self.config["keycard_reconnect_delay"] = self.keycard_reconnect_delay_var.get()
+        self.config["keycard_espam_duration"] = self.keycard_espam_duration_var.get()
+        self.config["keycard_espam_delay"] = self.keycard_espam_delay_var.get()
         self.config["trig_dc_throws"] = self.trig_dc_throws_var.get()
         self.config["trig_throw_delay"] = self.trig_throw_delay_var.get()
         self.config["trig_reconnect_after"] = self.trig_reconnect_after_var.get()
@@ -4920,11 +5321,13 @@ class QuickDupeApp:
         # E-spam settings
         self.config["espam_hold_mode"] = self.espam_hold_mode_var.get()
         self.config["espam_repeat_delay"] = self.espam_repeat_delay_var.get()
-        # E-Drop settings
+        # E-Drop settings (DC→E)
         self.config["edrop_hotkey"] = self.edrop_hotkey_var.get()
         self.config["edrop_repeat"] = self.edrop_repeat_var.get()
+        self.config["edrop_dc_mode"] = self.edrop_dc_mode_var.get()
         self.config["edrop_rclick_pos"] = list(self.edrop_rclick_pos)
         self.config["edrop_drop_pos"] = list(self.edrop_drop_pos)
+        self.config["edrop_dc_duration"] = self.edrop_dc_duration_var.get()
         self.config["edrop_wait_before_e"] = self.edrop_wait_before_e_var.get()
         self.config["edrop_e_duration"] = self.edrop_e_duration_var.get()
         self.config["edrop_wait_before_inv"] = self.edrop_wait_before_inv_var.get()
@@ -4933,6 +5336,19 @@ class QuickDupeApp:
         self.config["edrop_drop_delay"] = self.edrop_drop_delay_var.get()
         self.config["edrop_reconnect_delay"] = self.edrop_reconnect_delay_var.get()
         self.config["edrop_loop_delay"] = self.edrop_loop_delay_var.get()
+        # E-Drop settings (E→DC)
+        self.config["edrop_efirst_hotkey"] = self.edrop_efirst_hotkey_var.get()
+        self.config["edrop_efirst_repeat"] = self.edrop_efirst_repeat_var.get()
+        self.config["edrop_efirst_dc_mode"] = self.edrop_efirst_dc_mode_var.get()
+        self.config["edrop_efirst_e_duration"] = self.edrop_efirst_e_duration_var.get()
+        self.config["edrop_efirst_wait_after_e"] = self.edrop_efirst_wait_after_e_var.get()
+        self.config["edrop_efirst_dc_duration"] = self.edrop_efirst_dc_duration_var.get()
+        self.config["edrop_efirst_wait_before_inv"] = self.edrop_efirst_wait_before_inv_var.get()
+        self.config["edrop_efirst_inv_delay"] = self.edrop_efirst_inv_delay_var.get()
+        self.config["edrop_efirst_rclick_delay"] = self.edrop_efirst_rclick_delay_var.get()
+        self.config["edrop_efirst_drop_delay"] = self.edrop_efirst_drop_delay_var.get()
+        self.config["edrop_efirst_reconnect_delay"] = self.edrop_efirst_reconnect_delay_var.get()
+        self.config["edrop_efirst_loop_delay"] = self.edrop_efirst_loop_delay_var.get()
         # Quick disconnect hotkeys
         self.config["dc_both_hotkey"] = self.dc_both_hotkey_var.get()
         self.config["dc_outbound_hotkey"] = self.dc_outbound_hotkey_var.get()
@@ -5005,7 +5421,8 @@ class QuickDupeApp:
         print("[RESET] Mine dupe parameters reset to YOUR successful timings")
 
     def reset_edrop_defaults(self):
-        """Reset E-Drop timing parameters to defaults"""
+        """Reset E-Drop (DC→E) timing parameters to defaults"""
+        self.edrop_dc_duration_var.set(100)
         self.edrop_wait_before_e_var.set(200)
         self.edrop_e_duration_var.set(50)
         self.edrop_wait_before_inv_var.set(100)
@@ -5015,7 +5432,21 @@ class QuickDupeApp:
         self.edrop_reconnect_delay_var.set(200)
         self.edrop_loop_delay_var.set(500)
         self.save_settings()
-        print("[RESET] E-Drop parameters reset to defaults")
+        print("[RESET] E-Drop (DC→E) parameters reset to defaults")
+
+    def reset_edrop_efirst_defaults(self):
+        """Reset E-Drop (E→DC) timing parameters to defaults"""
+        self.edrop_efirst_e_duration_var.set(50)
+        self.edrop_efirst_wait_after_e_var.set(150)
+        self.edrop_efirst_dc_duration_var.set(100)
+        self.edrop_efirst_wait_before_inv_var.set(100)
+        self.edrop_efirst_inv_delay_var.set(150)
+        self.edrop_efirst_rclick_delay_var.set(100)
+        self.edrop_efirst_drop_delay_var.set(100)
+        self.edrop_efirst_reconnect_delay_var.set(200)
+        self.edrop_efirst_loop_delay_var.set(500)
+        self.save_settings()
+        print("[RESET] E-Drop (E→DC) parameters reset to defaults")
 
     def reset_all_settings(self):
         """Reset ALL settings including hotkeys and recordings to factory defaults"""
@@ -5317,6 +5748,7 @@ class QuickDupeApp:
         self.dc_inbound_hotkey_registered = None
         self.tamper_hotkey_registered = None
         self.mine_hotkey_registered = None
+        self.keycard_hotkey_registered = None
         self.minimize_hotkey_registered = None
         self.tray_hotkey_registered = None
         self.custom_macro_hotkeys = []
@@ -5373,10 +5805,34 @@ class QuickDupeApp:
                     edrop_hk, self.on_edrop_hotkey, suppress=False
                 )
                 print(
-                    f"[HOTKEY] E-Drop registered OK: '{edrop_hk}' -> {self.edrop_hotkey_registered}"
+                    f"[HOTKEY] E-Drop (DC→E) registered OK: '{edrop_hk}' -> {self.edrop_hotkey_registered}"
                 )
             except Exception as e:
                 print(f"[HOTKEY] FAILED edrop '{edrop_hk}': {e}")
+
+        edrop_efirst_hk = self.edrop_efirst_hotkey_var.get()
+        if edrop_efirst_hk and edrop_efirst_hk != "Press key...":
+            try:
+                self.edrop_efirst_hotkey_registered = keyboard.add_hotkey(
+                    edrop_efirst_hk, self.on_edrop_efirst_hotkey, suppress=False
+                )
+                print(
+                    f"[HOTKEY] E-Drop (E→DC) registered OK: '{edrop_efirst_hk}' -> {self.edrop_efirst_hotkey_registered}"
+                )
+            except Exception as e:
+                print(f"[HOTKEY] FAILED edrop_efirst '{edrop_efirst_hk}': {e}")
+
+        keycard_hk = self.keycard_hotkey_var.get()
+        if keycard_hk and keycard_hk != "Press key...":
+            try:
+                self.keycard_hotkey_registered = keyboard.add_hotkey(
+                    keycard_hk, self.on_keycard_hotkey, suppress=False
+                )
+                print(
+                    f"[HOTKEY] Key Card Glitch registered OK: '{keycard_hk}' -> {self.keycard_hotkey_registered}"
+                )
+            except Exception as e:
+                print(f"[HOTKEY] FAILED keycard '{keycard_hk}': {e}")
 
         mine_hk = self.mine_hotkey_var.get()
         if mine_hk and mine_hk != "Press key...":
@@ -5545,6 +6001,7 @@ class QuickDupeApp:
         self.espam_stop = True
         self.mine_stop = True
         self.edrop_stop = True
+        self.keycard_stop = True
         # Also cancel any active recordings
         self._drag_recording_cancelled = True
         self._mine_recording_cancelled = True
@@ -6298,6 +6755,209 @@ class QuickDupeApp:
             )
             self.root.after(0, lambda: self.show_overlay("E-Spam stopped."))
 
+    def on_keycard_hotkey(self):
+        """Toggle Key Card Glitch macro"""
+        if not self._keycard_lock.acquire(blocking=False):
+            return  # Already processing, ignore duplicate
+        try:
+            print(f"[HOTKEY] Key Card Glitch hotkey PRESSED! running={self.keycard_running}")
+            if self.keycard_running:
+                print("[HOTKEY] Setting keycard_stop = True")
+                self.keycard_stop = True
+                self.root.after(0, lambda: self.keycard_status_var.set("Stopping..."))
+            else:
+                print("[HOTKEY] Starting Key Card Glitch macro")
+                # Reset ALL stop flags so vsleep doesn't exit early
+                self.keycard_stop = False
+                self.mine_stop = False
+                self.triggernade_stop = False
+                self.espam_stop = False
+                self.keycard_running = True
+                self.root.after(0, lambda: self.keycard_status_var.set("RUNNING"))
+                self.root.after(
+                    0, lambda: self.keycard_status_label.config(foreground="cyan")
+                )
+                self.root.after(0, lambda: self.show_overlay("Key Card Glitch started"))
+                threading.Thread(target=self.run_keycard_macro, daemon=True).start()
+        finally:
+            self._keycard_lock.release()
+
+    def run_keycard_macro(self):
+        """
+        Key Card Glitch macro - CORRECT sequence:
+        1. Stand at locked door button (manual)
+        2. Disconnect
+        3. Open inventory + drop keycard (TAB → right-click → drop)
+        4. Spam E (while offline)
+        5. Reconnect
+        6. Spam E FAST (during 2-5s reconnection delay)
+        Result: Door unlocks + keycard duplicates on ground
+        """
+        is_disconnected = False
+        cycle = 0
+
+        print(f"[KEYCARD] Using positions: RClick:{self.keycard_rclick_pos} Drop:{self.keycard_drop_pos}")
+
+        # Release all buttons before starting
+        pynput_mouse.release(MouseButton.left)
+        pynput_mouse.release(MouseButton.right)
+        pynput_keyboard.release(Key.tab)
+        pynput_keyboard.release("e")
+
+        # Brief delay so starting hotkey doesn't trigger stop
+        time.sleep(0.2)
+
+        try:
+            while True:
+                if self.keycard_stop:
+                    print("[KEYCARD] Stop detected at cycle start")
+                    break
+
+                cycle += 1
+                print(f"\n{'='*50}")
+                print(f"KEY CARD GLITCH CYCLE {cycle}")
+                print(f"{'='*50}")
+
+                # Read all timing values ONCE at cycle start
+                dc_wait = self.config.get("keycard_dc_wait", 100)
+                inv_delay = self.config.get("keycard_inv_delay", 300)
+                rclick_delay = self.config.get("keycard_rclick_delay", 100)
+                drop_delay = self.config.get("keycard_drop_delay", 150)
+                offline_spam_duration = self.config.get("keycard_offline_espam_duration", 2000)
+                reconnect_spam_duration = self.config.get("keycard_espam_duration", 3000)
+                spam_delay = self.config.get("keycard_espam_delay", 50)
+                rclick_x, rclick_y = self.keycard_rclick_pos
+                drop_x, drop_y = self.keycard_drop_pos
+                
+                print(f"[{cycle}] Timings: dc_wait={dc_wait}, inv_delay={inv_delay}, rclick={rclick_delay}, drop={drop_delay}")
+
+                # ===== CORRECT KEYCARD GLITCH SEQUENCE =====
+                
+                # Step 1: User must be standing at door (can't automate position)
+                
+                # Step 2: DISCONNECT
+                print(f"[{cycle}] Step 2: Disconnecting...")
+                start_packet_drop(outbound=True, inbound=True)  # Full DC
+                is_disconnected = True
+                self.root.after(0, lambda c=cycle: self.show_overlay(f"KC {c}: OFFLINE"))
+                self.vsleep(dc_wait)
+
+                if self.keycard_stop:
+                    break
+
+                # Step 3: DROP KEYCARD FROM INVENTORY (while offline - queued)
+                print(f"[{cycle}] Step 3: Opening inventory and dropping keycard (QUEUED)...")
+                self.root.after(0, lambda: self.show_overlay("Drop Key"))
+                
+                # Open inventory (TAB)
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(50)
+                pynput_keyboard.release(Key.tab)
+                self.vsleep(inv_delay)
+
+                if self.keycard_stop:
+                    break
+
+                # Right-click on keycard
+                print(f"[{cycle}] Right-clicking keycard at ({rclick_x}, {rclick_y})...")
+                pynput_mouse.position = (rclick_x, rclick_y)
+                self.vsleep(rclick_delay)
+                pynput_mouse.press(MouseButton.right)
+                self.vsleep(25)
+                pynput_mouse.release(MouseButton.right)
+                self.vsleep(50)  # Wait for context menu
+                
+                if self.keycard_stop:
+                    break
+                
+                # Click drop option
+                print(f"[{cycle}] Clicking 'Drop' at ({drop_x}, {drop_y})...")
+                pynput_mouse.position = (drop_x, drop_y)
+                self.vsleep(25)
+                pynput_mouse.press(MouseButton.left)
+                self.vsleep(25)
+                pynput_mouse.release(MouseButton.left)
+                self.vsleep(drop_delay)
+
+                if self.keycard_stop:
+                    break
+
+                # Close inventory
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(50)
+                pynput_keyboard.release(Key.tab)
+                self.vsleep(100)
+
+                if self.keycard_stop:
+                    break
+
+                # Step 4: SPAM E (while still offline)
+                print(f"[{cycle}] Step 4: E-spamming while OFFLINE for {offline_spam_duration}ms...")
+                self.root.after(0, lambda: self.show_overlay("E-Spam (offline)"))
+                
+                offline_spam_count = offline_spam_duration // spam_delay
+                for i in range(offline_spam_count):
+                    if self.keycard_stop:
+                        break
+                    pynput_keyboard.press("e")
+                    self.vsleep(30)
+                    pynput_keyboard.release("e")
+                    self.vsleep(spam_delay - 30)
+
+                if self.keycard_stop:
+                    break
+
+                # Step 5: RECONNECT
+                print(f"[{cycle}] Step 5: Reconnecting...")
+                self.root.after(0, lambda: self.show_overlay("RECONNECT!"))
+                stop_packet_drop()
+                is_disconnected = False
+                self.vsleep(25)  # Brief delay for reconnect to start
+
+                if self.keycard_stop:
+                    break
+
+                # Step 6: SPAM E FAST (during reconnection delay window)
+                print(f"[{cycle}] Step 6: E-spamming FAST during reconnection delay for {reconnect_spam_duration}ms...")
+                self.root.after(0, lambda: self.show_overlay("E-SPAM FAST!"))
+                
+                reconnect_spam_count = reconnect_spam_duration // spam_delay
+                print(f"[{cycle}] E-spamming {reconnect_spam_count} times (delay: {spam_delay}ms)")
+                
+                for i in range(reconnect_spam_count):
+                    if self.keycard_stop:
+                        break
+                    pynput_keyboard.press("e")
+                    self.vsleep(30)
+                    pynput_keyboard.release("e")
+                    self.vsleep(spam_delay - 30)
+
+                print(f"[{cycle}] Key Card Glitch sequence complete!")
+                self.root.after(0, lambda: self.show_overlay("✔ Done!"))
+
+                # Single execution (not a loop unless user wants repeat)
+                break
+
+        finally:
+            # Release all keys and buttons
+            pynput_keyboard.release("e")
+            pynput_keyboard.release(Key.tab)
+            pynput_mouse.release(MouseButton.left)
+            pynput_mouse.release(MouseButton.right)
+
+            # Ensure reconnected
+            if is_disconnected:
+                stop_packet_drop()
+
+            self.keycard_running = False
+            self.keycard_stop = False
+            self.root.after(0, lambda: self.keycard_status_var.set("Ready"))
+            self.root.after(
+                0, lambda: self.keycard_status_label.config(foreground="gray")
+            )
+            self.root.after(0, lambda: self.show_overlay("Key Card Glitch stopped."))
+            print(f"[KEYCARD] Macro finished after {cycle} cycles")
+
     def on_edrop_hotkey(self):
         """Toggle E-Drop macro"""
         if not self._espam_lock.acquire(
@@ -6326,13 +6986,170 @@ class QuickDupeApp:
         finally:
             self._espam_lock.release()
 
+    def on_edrop_efirst_hotkey(self):
+        """Toggle E-Drop E-First macro"""
+        if not self._espam_lock.acquire(
+            blocking=False
+        ):  # Reuse espam lock for simplicity
+            return
+        try:
+            print(f"[HOTKEY] E-Drop (E→DC) hotkey PRESSED! running={self.edrop_efirst_running}")
+            if self.edrop_efirst_running:
+                print("[HOTKEY] Setting edrop_stop = True")
+                self.edrop_stop = True
+                self.root.after(0, lambda: self.edrop_efirst_status_var.set("Stopping..."))
+            else:
+                print("[HOTKEY] Starting E-Drop (E→DC) macro")
+                self.edrop_stop = False
+                self.mine_stop = False
+                self.triggernade_stop = False
+                self.espam_stop = False
+                self.edrop_efirst_running = True
+                self.root.after(0, lambda: self.edrop_efirst_status_var.set("RUNNING"))
+                self.root.after(
+                    0, lambda: self.edrop_efirst_status_label.config(foreground="orange")
+                )
+                self.root.after(0, lambda: self.show_overlay("E-Drop (E→DC) started"))
+                threading.Thread(target=self.run_edrop_e_first_macro, daemon=True).start()
+        finally:
+            self._espam_lock.release()
+
+    def run_edrop_e_first_macro(self):
+        """E-Drop Collection macro (E FIRST variant): E → wait → DC → Inventory → Right-click → Drop → Reconnect"""
+        # Get settings (E→DC specific)
+        repeat = self.edrop_efirst_repeat_var.get()
+        e_duration = self.edrop_efirst_e_duration_var.get()
+        wait_after_e = self.edrop_efirst_wait_after_e_var.get()
+        dc_duration = self.edrop_efirst_dc_duration_var.get()
+        wait_before_inv = self.edrop_efirst_wait_before_inv_var.get()
+        inv_delay = self.edrop_efirst_inv_delay_var.get()
+        rclick_delay = self.edrop_efirst_rclick_delay_var.get()
+        drop_delay = self.edrop_efirst_drop_delay_var.get()
+        reconnect_delay = self.edrop_efirst_reconnect_delay_var.get()
+        loop_delay = self.edrop_efirst_loop_delay_var.get()
+
+        rclick_pos = self.edrop_rclick_pos
+        drop_pos = self.edrop_drop_pos
+
+        is_disconnected = False
+        cycle = 0
+
+        try:
+            while True:
+                if self.edrop_stop:
+                    break
+
+                cycle += 1
+                print(f"[E-DROP-EFIRST] Cycle {cycle} starting...")
+                self.root.after(
+                    0, lambda c=cycle: self.edrop_efirst_status_var.set(f"Cycle {c}")
+                )
+
+                # 1. Press E FIRST (interact with door/object)
+                pynput_keyboard.press("e")
+                self.vsleep(e_duration)
+                pynput_keyboard.release("e")
+                print(f"[E-DROP-EFIRST] Pressed E (interact)")
+                self.root.after(0, lambda: self.show_overlay("E → Wait → DC"))
+
+                # 2. Wait AFTER E press
+                self.vsleep(wait_after_e)
+                if self.edrop_stop:
+                    break
+
+                # 3. Disconnect (use selected mode)
+                dc_mode = self.edrop_efirst_dc_mode_var.get()
+                if dc_mode == "both":
+                    start_packet_drop(outbound=True, inbound=True)
+                    print(f"[E-DROP-EFIRST] Disconnected (BOTH)")
+                elif dc_mode == "outbound":
+                    start_packet_drop(outbound=True, inbound=False)
+                    print(f"[E-DROP-EFIRST] Disconnected (OUTBOUND only)")
+                else:  # inbound
+                    start_packet_drop(outbound=False, inbound=True)
+                    print(f"[E-DROP-EFIRST] Disconnected (INBOUND only)")
+                is_disconnected = True
+                
+                # Hold DC for specified duration
+                self.vsleep(dc_duration)
+                if self.edrop_stop:
+                    break
+
+                # 4. Wait before opening inventory
+                self.vsleep(wait_before_inv)
+                if self.edrop_stop:
+                    break
+
+                # 5. Open inventory (TAB)
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(inv_delay)
+                pynput_keyboard.release(Key.tab)
+                print(f"[E-DROP-EFIRST] Inventory opened")
+
+                # 6. Right-click on item
+                pynput_mouse.position = rclick_pos
+                self.vsleep(rclick_delay)
+                if self.edrop_stop:
+                    break
+                pynput_mouse.click(MouseButton.right)
+                print(f"[E-DROP-EFIRST] Right-clicked at {rclick_pos}")
+
+                # 7. Click drop menu
+                self.vsleep(drop_delay)
+                if self.edrop_stop:
+                    break
+                pynput_mouse.position = drop_pos
+                self.vsleep(50)  # Small delay before click
+                pynput_mouse.click(MouseButton.left)
+                print(f"[E-DROP-EFIRST] Clicked drop at {drop_pos}")
+
+                # 8. Close inventory (TAB toggle)
+                self.vsleep(25)
+                pynput_keyboard.press(Key.tab)
+                self.vsleep(25)
+                pynput_keyboard.release(Key.tab)
+                print(f"[E-DROP-EFIRST] Inventory closed")
+
+                # 9. Reconnect
+                stop_packet_drop()
+                is_disconnected = False
+                print(f"[E-DROP-EFIRST] Reconnected")
+                self.root.after(0, lambda: self.show_overlay("Reconnected"))
+
+                # 10. Wait after reconnect
+                self.vsleep(reconnect_delay)
+
+                # Check if looping or one-shot
+                if not repeat:
+                    print(f"[E-DROP-EFIRST] Single run complete")
+                    break
+
+                # Loop delay before next cycle
+                self.vsleep(loop_delay)
+                if self.edrop_stop:
+                    break
+
+        finally:
+            pynput_keyboard.release("e")
+            pynput_keyboard.release(Key.tab)
+            if is_disconnected:
+                stop_packet_drop()
+            self.edrop_efirst_running = False
+            self.edrop_stop = False
+            self.root.after(0, lambda: self.edrop_efirst_status_var.set("Ready"))
+            self.root.after(
+                0, lambda: self.edrop_efirst_status_label.config(foreground="gray")
+            )
+            self.root.after(0, lambda: self.show_overlay("E-Drop (E→DC) stopped."))
+            print(f"[E-DROP-EFIRST] Macro finished after {cycle} cycles")
+
+
     def run_edrop_macro(self):
         """E-Drop Collection macro: DC → E → Inventory → Right-click → Drop → Reconnect"""
         # Brief delay so starting hotkey doesn't trigger stop
-        time.sleep(0.2)
-
         # Get settings
         repeat = self.edrop_repeat_var.get()
+        dc_duration = self.edrop_dc_duration_var.get()
         wait_before_e = self.edrop_wait_before_e_var.get()
         e_duration = self.edrop_e_duration_var.get()
         wait_before_inv = self.edrop_wait_before_inv_var.get()
@@ -6359,27 +7176,42 @@ class QuickDupeApp:
                     0, lambda c=cycle: self.edrop_status_var.set(f"Cycle {c}")
                 )
 
-                # 1. Disconnect
-                start_packet_drop(outbound=True, inbound=True)
+                # 1. Disconnect FIRST (use selected mode)
+                dc_mode = self.edrop_dc_mode_var.get()
+                if dc_mode == "both":
+                    start_packet_drop(outbound=True, inbound=True)
+                    print(f"[E-DROP] Disconnected (BOTH)")
+                elif dc_mode == "outbound":
+                    start_packet_drop(outbound=True, inbound=False)
+                    print(f"[E-DROP] Disconnected (OUTBOUND only)")
+                else:  # inbound
+                    start_packet_drop(outbound=False, inbound=True)
+                    print(f"[E-DROP] Disconnected (INBOUND only)")
                 is_disconnected = True
-                print(f"[E-DROP] Disconnected")
-                self.root.after(0, lambda: self.show_overlay("DC → E → Drop"))
+                self.root.after(0, lambda: self.show_overlay("DC → E"))
+                
+                # Hold DC for specified duration
+                self.vsleep(dc_duration)
+                if self.edrop_stop:
+                    break
 
-                # 2. Wait 0.2s (200ms) then press E
+                # 2. Wait before E (must be ≤200ms for DC→E timing)
                 self.vsleep(wait_before_e)
                 if self.edrop_stop:
                     break
+
+                # 3. Press E (interact with door/object while offline)
                 pynput_keyboard.press("e")
                 self.vsleep(e_duration)
                 pynput_keyboard.release("e")
-                print(f"[E-DROP] Pressed E")
+                print(f"[E-DROP] Pressed E after {wait_before_e}ms (interact)")
 
-                # 3. Wait before opening inventory
+                # 4. Wait before opening inventory
                 self.vsleep(wait_before_inv)
                 if self.edrop_stop:
                     break
 
-                # 4. Open inventory (TAB)
+                # 5. Open inventory (TAB)
                 pynput_keyboard.press(Key.tab)
                 self.vsleep(inv_delay)
                 pynput_keyboard.release(Key.tab)
@@ -6403,9 +7235,9 @@ class QuickDupeApp:
                 print(f"[E-DROP] Clicked drop at {drop_pos}")
 
                 # 7. Close inventory (TAB toggle)
-                self.vsleep(100)
+                self.vsleep(25)
                 pynput_keyboard.press(Key.tab)
-                self.vsleep(51)
+                self.vsleep(25)
                 pynput_keyboard.release(Key.tab)
                 print(f"[E-DROP] Inventory closed")
 
