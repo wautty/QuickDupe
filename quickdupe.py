@@ -5289,8 +5289,6 @@ class QuickDupeApp:
         self.config["keycard_dc_wait"] = self.keycard_dc_wait_var.get()
         self.config["keycard_inv_delay"] = self.keycard_inv_delay_var.get()
         self.config["keycard_drop_delay"] = self.keycard_drop_delay_var.get()
-        self.config["keycard_close_delay"] = self.keycard_close_delay_var.get()
-        self.config["keycard_reconnect_delay"] = self.keycard_reconnect_delay_var.get()
         self.config["keycard_espam_duration"] = self.keycard_espam_duration_var.get()
         self.config["keycard_espam_delay"] = self.keycard_espam_delay_var.get()
         self.config["trig_dc_throws"] = self.trig_dc_throws_var.get()
