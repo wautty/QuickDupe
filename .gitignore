@@ -9,3 +9,41 @@ Videos/
 *.c
 nul
 
+.venv
+ 
+.vscode/
+.idea/
+*.swp
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Certificates, secrets, env
+.env
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Windows driver outputs
+*.sys
+
+# node/npm
+node_modules/
+
+# Windivert SDK binaries (keep canonical copies under windivert_sdk/)
+flowtrack.exe
+netdump.exe
+netfilter.exe
+passthru.exe
+socketdump.exe
+streamdump.exe
+test.exe
+webfilter.exe
+disconnect.exe
+WinDivert.dll
+WinDivert.lib
+WinDivert64.sys
+WinDivert32.sys
+windivertctl.exe
