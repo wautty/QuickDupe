@@ -13,6 +13,9 @@ import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog
 import logging
+from pynput.keyboard import Controller as KeyboardController, Key
+from pynput.mouse import Button as MouseButton, Controller as MouseController
+import pydivert
 
 # =============================================================================
 # OBFUSCATION FEATURES (opt-in: requires "obfuscate" file next to exe)
@@ -28,7 +31,6 @@ import logging
 # Unique build identifier - generated fresh each build by build.py
 BUILD_ID = "__BUILD_ID_PLACEHOLDER__"
 
-
 def _check_obfuscation_enabled():
     """Check if obfuscation is enabled by looking for 'obfuscate' file next to exe"""
     if getattr(sys, "frozen", False):
@@ -36,7 +38,6 @@ def _check_obfuscation_enabled():
     else:
         exe_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.exists(os.path.join(exe_dir, "obfuscate"))
-
 
 OBFUSCATION_ENABLED = _check_obfuscation_enabled()
 
@@ -109,8 +110,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 log = logging.getLogger("QuickDupe")
-from pynput.keyboard import Controller as KeyboardController, Key
-from pynput.mouse import Button as MouseButton, Controller as MouseController
+
 
 # pynput controllers
 pynput_keyboard = KeyboardController()
@@ -266,9 +266,7 @@ def is_admin():
     except:
         return False
 
-
 CONFIG_FILE = os.path.join(os.environ.get("APPDATA", "."), "QuickDupe", "config.json")
-
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -276,12 +274,10 @@ def load_config():
             return json.load(f)
     return {}
 
-
 def save_config(config):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f)
-
 
 # Custom macros storage (separate from main config)
 CUSTOM_MACROS_FILE = os.path.join(
@@ -2309,7 +2305,7 @@ class QuickDupeApp:
         edrop_header = ttk.Frame(frame)
         edrop_header.pack(pady=(5, 5))
         ttk.Label(
-            edrop_header, text="── Hatch v2 ──", style="Header.TLabel"
+            edrop_header, text="── Hatch glitch v2 ──", style="Header.TLabel"
         ).pack(side="left")
         edrop_info = ttk.Label(
             edrop_header,
@@ -2374,7 +2370,7 @@ class QuickDupeApp:
             ).pack(anchor="w", padx=20)
 
         # Timings
-        ttk.Label(frame, text="Hatch v2 Timings:", font=("Arial", 9, "bold")).pack(anchor="w", padx=10, pady=(5, 2))
+        ttk.Label(frame, text="Hatch glitch v2 Timings:", font=("Arial", 9, "bold")).pack(anchor="w", padx=10, pady=(5, 2))
         self.create_slider(
             frame, "E press duration:", "edrop_e_press", 10, 1, 100, "ms"
         )
@@ -3520,7 +3516,7 @@ class QuickDupeApp:
             if not self._custom_macro_recording_active:
                 return
             btn_name = str(button).replace("Button.", "")
-            timestamp = (time.perf_counter() - self._macro_rec_start_time) * 1000  # pyright: ignore[reportOperatorIssue] # ms
+            timestamp = (time.perf_counter() - (self._macro_rec_start_time or 0)) * 1000
             event = {
                 "type": "click",
                 "x": x,
@@ -3589,7 +3585,7 @@ class QuickDupeApp:
                 return
             self._custom_macro_keys_held.add(key_name)
 
-            timestamp = (time.perf_counter() - self._macro_rec_start_time) * 1000 # pyright: ignore[reportOperatorIssue]
+            timestamp = (time.perf_counter() - (self._macro_rec_start_time or 0)) * 1000
             event = {"type": "key", "key": key_name, "down": True, "time": timestamp}
             self._custom_macro_recording.append(event)
             print(f"[MACRO REC] key {key_name} down @ {timestamp:.0f}ms")
@@ -3619,14 +3615,14 @@ class QuickDupeApp:
             # Remove from held keys
             self._custom_macro_keys_held.discard(key_name)
 
-            timestamp = (time.perf_counter() - self._macro_rec_start_time) * 1000
+            timestamp = (time.perf_counter() - (self._macro_rec_start_time or 0)) * 1000
             event = {"type": "key", "key": key_name, "down": False, "time": timestamp}
             self._custom_macro_recording.append(event)
             print(f"[MACRO REC] key {key_name} up @ {timestamp:.0f}ms")
 
         mouse_listener = mouse.Listener(on_click=on_click)
         keyboard_listener = kb.Listener(
-            on_press=on_key_press, on_release=on_key_release
+            on_press=on_key_press, on_release=on_key_release  # type: ignore
         )
         mouse_listener.start()
         keyboard_listener.start()
@@ -3909,7 +3905,7 @@ class QuickDupeApp:
                 )
             elif self._mine_drag_started:
                 # Validate drag: >20ms hold and >50px distance
-                duration_ms = (time.time() - self._mine_drag_start_time) * 1000
+                duration_ms = (time.time() - (self._mine_drag_start_time or 0)) * 1000
                 dx = x - self._mine_drag_start_temp[0]
                 dy = y - self._mine_drag_start_temp[1]
                 distance = (dx * dx + dy * dy) ** 0.5
@@ -3939,16 +3935,15 @@ class QuickDupeApp:
                         pass
                 return False  # Stop listener
 
-        listener_ref = [None]
         esc_hook_ref = [None]
-        listener_ref[0] = mouse.Listener(on_click=on_click)
-        listener_ref[0].start()
+        listener_ref = mouse.Listener(on_click=on_click)
+        listener_ref.start()
 
         # ESC to cancel and stop all macros
         def on_esc():
             self._mine_recording_cancelled = True
-            if listener_ref[0]:
-                listener_ref[0].stop()
+            if listener_ref[0]:  # type: ignore
+                listener_ref[0].stop()  # type: ignore
             self.root.after(0, lambda: self.mine_drag_btn.config(text="Record"))
             self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
             self.stop_all_macros()
@@ -3958,7 +3953,7 @@ class QuickDupeApp:
                 except:
                     pass
 
-        esc_hook_ref[0] = keyboard.on_press_key(
+        esc_hook_ref[0] = keyboard.on_press_key( # pyright: ignore[reportCallIssue] # type: ignore
             "esc", lambda e: on_esc(), suppress=False
         )
 
@@ -4259,9 +4254,9 @@ class QuickDupeApp:
         self.drag_label_var.set("Get ready...")
 
         # Start countdown
-        self._drag_countdown(10)
+        self._simple_drag_countdown(10)
 
-    def _drag_countdown(self, seconds_left):
+    def _simple_drag_countdown(self, seconds_left):
         """Countdown before starting drag recording"""
         if not self.recording_drag:
             return  # Cancelled
@@ -4269,7 +4264,7 @@ class QuickDupeApp:
         if seconds_left > 0:
             self.drag_record_btn.config(text=f"{seconds_left}...")
             self.show_overlay(f"Drag recording in {seconds_left}...", force=True)
-            self.root.after(1000, lambda: self._drag_countdown(seconds_left - 1))
+            self.root.after(1000, lambda: self._simple_drag_countdown(seconds_left - 1))
         else:
             # Countdown done - start listening
             self._start_drag_listener()
@@ -4359,7 +4354,7 @@ class QuickDupeApp:
             x, y = int(x), int(y)
 
             if pressed:
-                state["start_pos"] = (x, y)
+                state["start_pos"] = (x, y) # type: ignore
                 self.show_overlay(f"Dragging from ({x},{y})...", force=True)
             else:
                 if state["start_pos"]:
@@ -4385,7 +4380,7 @@ class QuickDupeApp:
                             pass
                     return False  # Stop listener
 
-        listener_ref[0] = mouse.Listener(on_click=on_click)
+        listener_ref[0] = mouse.Listener(on_click=on_click) # type: ignore
         listener_ref[0].start()
 
         # ESC to cancel and stop all macros
@@ -4401,7 +4396,7 @@ class QuickDupeApp:
                 except:
                     pass
 
-        esc_hook_ref[0] = keyboard.on_press_key(
+        esc_hook_ref[0] = keyboard.on_press_key( # pyright: ignore[reportArgumentType] # pyright: ignore[reportArgumentType] # pyright: ignore[reportCallIssue]
             "esc", lambda e: on_esc(), suppress=False
         )
 
@@ -4427,7 +4422,7 @@ class QuickDupeApp:
                 )
             elif self._trig_drag_started:
                 # Validate drag: >20ms hold and >50px distance
-                duration_ms = (time.time() - self._trig_drag_start_time) * 1000
+                duration_ms = (time.time() - (self._trig_drag_start_time or 0)) * 1000
                 dx = x - self._trig_drag_start_temp[0]
                 dy = y - self._trig_drag_start_temp[1]
                 distance = (dx * dx + dy * dy) ** 0.5
@@ -4459,7 +4454,7 @@ class QuickDupeApp:
 
         listener_ref = [None]
         esc_hook_ref = [None]
-        listener_ref[0] = mouse.Listener(on_click=on_click)
+        listener_ref[0] = mouse.Listener(on_click=on_click) # pyright: ignore[reportCallIssue, reportArgumentType]
         listener_ref[0].start()
 
         # ESC to cancel and stop all macros
@@ -4476,7 +4471,7 @@ class QuickDupeApp:
                 except:
                     pass
 
-        esc_hook_ref[0] = keyboard.on_press_key(
+        esc_hook_ref[0] = keyboard.on_press_key(  # type: ignore
             "esc", lambda e: on_esc(), suppress=False
         )
 
@@ -4549,7 +4544,7 @@ class QuickDupeApp:
                 except:
                     pass
 
-        esc_hook_ref[0] = keyboard.on_press_key(
+        esc_hook_ref[0] = keyboard.on_press_key( # type: ignore
             "esc", lambda e: on_esc(), suppress=False
         )
 
@@ -6373,18 +6368,18 @@ class QuickDupeApp:
 
                 # ===== COOK: Hold M1 =====
                 print(f"[QUICKDROP] M1 down (cook {cook_time}s)")
-                pynput_mouse.press(pynput.mouse.Button.left)
+                pynput_mouse.press(MouseButton.left)
                 time.sleep(cook_time)
-                pynput_mouse.release(pynput.mouse.Button.left)
+                pynput_mouse.release(MouseButton.left)
                 print("[QUICKDROP] M1 up")
 
                 if self.quickdrop_stop:
                     break
 
                 # ===== OPEN INVENTORY =====
-                pynput_keyboard.press(pynput.keyboard.Key.tab)
+                pynput_keyboard.press(Key.tab)
                 time.sleep(0.01)
-                pynput_keyboard.release(pynput.keyboard.Key.tab)
+                pynput_keyboard.release(Key.tab)
                 print("[QUICKDROP] TAB (inventory)")
 
                 # Configurable inventory delay
@@ -6397,9 +6392,9 @@ class QuickDupeApp:
                 rx, ry = self.quickdrop_rclick_pos
                 pynput_mouse.position = (rx, ry)
                 time.sleep(0.01)
-                pynput_mouse.press(pynput.mouse.Button.right)
+                pynput_mouse.press(MouseButton.right)
                 time.sleep(0.01)
-                pynput_mouse.release(pynput.mouse.Button.right)
+                pynput_mouse.release(MouseButton.right)
                 print(f"[QUICKDROP] Right-click at ({rx}, {ry})")
 
                 # Configurable menu delay
@@ -6409,9 +6404,9 @@ class QuickDupeApp:
                 lx, ly = self.quickdrop_lclick_pos
                 pynput_mouse.position = (lx, ly)
                 time.sleep(0.01)
-                pynput_mouse.press(pynput.mouse.Button.left)
+                pynput_mouse.press(MouseButton.left)
                 time.sleep(0.01)
-                pynput_mouse.release(pynput.mouse.Button.left)
+                pynput_mouse.release(MouseButton.left)
                 print(f"[QUICKDROP] Left-click at ({lx}, {ly})")
 
                 if self.quickdrop_stop:
@@ -6419,9 +6414,9 @@ class QuickDupeApp:
 
                 # ===== CLOSE INVENTORY =====
                 time.sleep(drop_delay)
-                pynput_keyboard.press(pynput.keyboard.Key.esc)
+                pynput_keyboard.press(Key.esc)
                 time.sleep(0.01)
-                pynput_keyboard.release(pynput.keyboard.Key.esc)
+                pynput_keyboard.release(Key.esc)
                 print("[QUICKDROP] ESC (close inventory)")
 
                 # Small delay after closing
@@ -6904,14 +6899,16 @@ class QuickDupeApp:
                 print(f"[{cycle}] Step 4: E-spamming while OFFLINE for {offline_spam_duration}ms...")
                 self.root.after(0, lambda: self.show_overlay("E-Spam (offline)"))
                 
-                offline_spam_count = offline_spam_duration // spam_delay
+                spam_delay = spam_delay or 100  # Default 100ms if None
+                offline_spam_duration = offline_spam_duration or 1000  # Default 1000ms if None
+                offline_spam_count = int(offline_spam_duration / spam_delay) if spam_delay > 0 else 0
                 for i in range(offline_spam_count):
                     if self.keycard_stop:
                         break
                     pynput_keyboard.press("e")
                     self.vsleep(30)
                     pynput_keyboard.release("e")
-                    self.vsleep(spam_delay - 30)
+                    self.vsleep(max(0, spam_delay - 30))
 
                 if self.keycard_stop:
                     break
@@ -6930,7 +6927,8 @@ class QuickDupeApp:
                 print(f"[{cycle}] Step 6: E-spamming FAST during reconnection delay for {reconnect_spam_duration}ms...")
                 self.root.after(0, lambda: self.show_overlay("E-SPAM FAST!"))
                 
-                reconnect_spam_count = reconnect_spam_duration // spam_delay
+                reconnect_spam_duration = reconnect_spam_duration or 3000  # Default 3000ms if None
+                reconnect_spam_count = int(reconnect_spam_duration / spam_delay) if spam_delay > 0 else 0
                 print(f"[{cycle}] E-spamming {reconnect_spam_count} times (delay: {spam_delay}ms)")
                 
                 for i in range(reconnect_spam_count):
@@ -6939,7 +6937,7 @@ class QuickDupeApp:
                     pynput_keyboard.press("e")
                     self.vsleep(30)
                     pynput_keyboard.release("e")
-                    self.vsleep(spam_delay - 30)
+                    self.vsleep(max(0, spam_delay - 30))
 
                 print(f"[{cycle}] Key Card Glitch sequence complete!")
                 self.root.after(0, lambda: self.show_overlay("✔ Done!"))
@@ -6974,13 +6972,13 @@ class QuickDupeApp:
         ):  # Reuse espam lock for simplicity
             return
         try:
-            print(f"[HOTKEY] Hatch v2 hotkey PRESSED! running={self.edrop_running}")
+            print(f"[HOTKEY] Hatch glitch v2 hotkey PRESSED! running={self.edrop_running}")
             if self.edrop_running:
                 print("[HOTKEY] Setting edrop_stop = True")
                 self.edrop_stop = True
                 self.root.after(0, lambda: self.edrop_status_var.set("Stopping..."))
             else:
-                print("[HOTKEY] Starting Hatch v2 macro")
+                print("[HOTKEY] Starting Hatch glitch v2 macro")
                 self.edrop_stop = False
                 self.mine_stop = False
                 self.triggernade_stop = False
@@ -6990,7 +6988,7 @@ class QuickDupeApp:
                 self.root.after(
                     0, lambda: self.edrop_status_label.config(foreground="orange")
                 )
-                self.root.after(0, lambda: self.show_overlay("Hatch v2 started"))
+                self.root.after(0, lambda: self.show_overlay("Hatch glitch v2 started"))
                 threading.Thread(target=self.run_edrop_macro, daemon=True).start()
         finally:
             self._espam_lock.release()
@@ -7272,7 +7270,7 @@ class QuickDupeApp:
             self.root.after(
                 0, lambda: self.edrop_status_label.config(foreground="gray")
             )
-            self.root.after(0, lambda: self.show_overlay("Hatch v2 stopped."))
+            self.root.after(0, lambda: self.show_overlay("Hatch glitch v2 stopped."))
             print(f"[E-DROP] Macro finished after {cycle} cycles")
 
     def show_overlay(self, text, force=False):
