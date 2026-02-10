@@ -13,8 +13,10 @@ import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog
 import logging
+from typing import Any
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Button as MouseButton, Controller as MouseController
+from macros.quick_dupe_items import run_quick_dupe_items
 from utils.network import (
     start_packet_drop,
     stop_packet_drop,
@@ -234,6 +236,11 @@ class QuickDupeApp:
         self.quickdrop_stop = False
         self.quickdrop_hotkey_registered = None
         self.recording_quickdrop = False
+        self.quick_items_running = False
+        self.quick_items_stop = False
+        self.quick_items_hotkey_registered = None
+        self.quick_items_cooldown_until = 0
+        self.recording_quick_items = False
         self.mine_running = False
         self.mine_stop = False
         self.mine_hotkey_registered = None
@@ -284,6 +291,7 @@ class QuickDupeApp:
         self._mine_lock = threading.Lock()
         self._triggernade_lock = threading.Lock()
         self._quickdrop_lock = threading.Lock()
+        self._quick_items_lock = threading.Lock()
         self._espam_lock = threading.Lock()
         self._keycard_lock = threading.Lock()
 
@@ -1391,6 +1399,121 @@ class QuickDupeApp:
             frame, textvariable=self.quickdrop_status_var, style="Dim.TLabel"
         )
         self.quickdrop_status_label.pack(pady=5)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
+
+        # ===== QUICK DUPE ITEMS SECTION =====
+        qdi_header = ttk.Frame(frame)
+        qdi_header.pack(pady=(5, 5))
+        ttk.Label(
+            qdi_header, text="── Quick Dupe Items ──", style="Header.TLabel"
+        ).pack(side="left")
+        qdi_info = ttk.Label(
+            qdi_header, text=" (?)", foreground=self.colors["text_dim"], cursor="hand2"
+        )
+        qdi_info.pack(side="left")
+        self._add_tooltip(
+            qdi_info,
+            "1) Item in quick slot 1\n"
+            "2) Split item to quick slot 2\n"
+            "3) Close inventory\n"
+            "4) Q + select quick slot 1\n"
+            "5) Open inventory (TAB)\n"
+            "6) Move slot 1 → slot 2\n"
+            "7) Split slot 2 → slot 1\n\n"
+            "Splitting uses Alt + LMB drag.",
+        )
+
+        # Quick Dupe Items Hotkey row
+        qdi_hk = ttk.Frame(frame)
+        qdi_hk.pack(fill="x", padx=10, pady=5)
+        ttk.Label(qdi_hk, text="Hotkey:").pack(side="left")
+        self.quick_items_hotkey_var = tk.StringVar(
+            value=self.config.get("quick_items_hotkey", "")
+        )
+        self.quick_items_hotkey_entry = tk.Entry(
+            qdi_hk,
+            textvariable=self.quick_items_hotkey_var,
+            width=15,
+            state="readonly",
+            bd=0,
+            highlightthickness=0,
+            bg=self.colors["bg_light"],
+            fg=self.colors["text"],
+            readonlybackground=self.colors["bg_light"],
+        )
+        self.quick_items_hotkey_entry.pack(side="left", padx=5)
+        self.quick_items_record_btn = ttk.Button(
+            qdi_hk, text="Set", width=6, command=self.start_recording_quick_items
+        )
+        self.quick_items_record_btn.pack(side="left", padx=5)
+
+        # Quick slot positions record
+        qdi_pos_frame = ttk.Frame(frame)
+        qdi_pos_frame.pack(fill="x", padx=10, pady=2)
+        self.quick_items_pos_btn = ttk.Button(
+            qdi_pos_frame,
+            text="Record Slots",
+            width=14,
+            command=self.start_quick_items_pos_recording,
+        )
+        self.quick_items_pos_btn.pack(side="left")
+        self.quick_items_pos_var = tk.StringVar()
+        qdi_slot1 = self.config.get("quick_items_slot1_pos", [0, 0])
+        qdi_slot2 = self.config.get("quick_items_slot2_pos", [0, 0])
+        self.quick_items_slot1_pos = tuple(qdi_slot1)
+        self.quick_items_slot2_pos = tuple(qdi_slot2)
+        self.quick_items_pos_var.set(f"S1:{qdi_slot1} S2:{qdi_slot2}")
+        ttk.Label(
+            qdi_pos_frame, textvariable=self.quick_items_pos_var, font=("Consolas", 8)
+        ).pack(side="left", padx=5)
+
+        # Quick Dupe Items Timings
+        self.create_slider(
+            frame, "TAB hold:", "quick_items_tab_hold", 50, 10, 200, "ms"
+        )
+        self.create_slider(
+            frame, "Inv delay:", "quick_items_inv_delay", 120, 0, 500, "ms"
+        )
+        self.create_slider(
+            frame, "Action gap:", "quick_items_action_delay", 50, 0, 200, "ms"
+        )
+        self.create_slider(
+            frame, "Alt delay:", "quick_items_alt_delay", 20, 0, 100, "ms"
+        )
+        self.create_slider(
+            frame, "Split hold:", "quick_items_split_hold", 40, 10, 300, "ms"
+        )
+        self.create_slider(
+            frame, "Drag hold:", "quick_items_drag_hold", 20, 5, 200, "ms"
+        )
+        self.create_slider(
+            frame, "Drag speed:", "quick_items_drag_speed", 8, 3, 20, "ms/step"
+        )
+        self.create_slider(
+            frame, "Q hold:", "quick_items_q_delay", 120, 0, 500, "ms"
+        )
+        self.create_slider(
+            frame,
+            "Q select delay:",
+            "quick_items_q_select_delay",
+            120,
+            0,
+            500,
+            "ms",
+        )
+        self.create_slider(
+            frame, "Spam delay:", "quick_items_spam_delay", 25, 0, 200, "ms"
+        )
+        self.create_slider(
+            frame, "Spam max:", "quick_items_spam_max_clicks", 20, 1, 200, ""
+        )
+
+        self.quick_items_status_var = tk.StringVar(value="Ready")
+        self.quick_items_status_label = ttk.Label(
+            frame, textvariable=self.quick_items_status_var, style="Dim.TLabel"
+        )
+        self.quick_items_status_label.pack(pady=5)
 
         ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
 
@@ -2649,6 +2772,7 @@ class QuickDupeApp:
         self.recording_mine = True
         self.recording_triggernade = False
         self.recording_espam = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3786,6 +3910,7 @@ class QuickDupeApp:
         self.recording_espam = True
         self.recording_triggernade = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_edrop = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
@@ -3807,6 +3932,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_quickdrop = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3826,6 +3952,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_quickdrop = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3845,6 +3972,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_quickdrop = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3862,6 +3990,7 @@ class QuickDupeApp:
         self.recording_quickdrop = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3879,6 +4008,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -3887,6 +4017,27 @@ class QuickDupeApp:
         self.recording_tray = False
         self.quickdrop_record_btn.config(text="...")
         self.quickdrop_hotkey_var.set("Press key...")
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.focus_force()
+
+    def start_recording_quick_items(self):
+        self._recording_previous_value = self.quick_items_hotkey_var.get()
+        self.recording_quick_items = True
+        self.recording_triggernade = False
+        self.recording_quickdrop = False
+        self.recording_espam = False
+        self.recording_mine = False
+        self.recording_keycard = False
+        self.recording_edrop = False
+        self.recording_edrop_efirst = False
+        self.recording_dc_both = False
+        self.recording_dc_outbound = False
+        self.recording_dc_inbound = False
+        self.recording_tamper = False
+        self.recording_minimize = False
+        self.recording_tray = False
+        self.quick_items_record_btn.config(text="...")
+        self.quick_items_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.focus_force()
 
@@ -3938,6 +4089,66 @@ class QuickDupeApp:
 
         listener = mouse.Listener(on_click=on_click)
         listener.start()
+
+    def start_quick_items_pos_recording(self):
+        """Record quick slot 1 and 2 positions with two left clicks"""
+        from pynput import mouse
+
+        self.quick_items_pos_btn.config(text="Slot 1...")
+        self.show_overlay("CLICK Quick Slot 1", force=True)
+        self._quick_items_slot1_temp = None
+
+        listener_ref = [None]
+        esc_hook_ref = [None]
+
+        def on_click(x, y, button, pressed):
+            if button != mouse.Button.left or not pressed:
+                return
+
+            if self._quick_items_slot1_temp is None:
+                self._quick_items_slot1_temp = (int(x), int(y))
+                self.root.after(0, lambda: self.quick_items_pos_btn.config(text="Slot 2..."))
+                self.root.after(0, lambda: self.show_overlay("CLICK Quick Slot 2", force=True))
+                print(f"[QD-ITEMS] Slot1 at {self._quick_items_slot1_temp}")
+                return
+
+            self.quick_items_slot1_pos = self._quick_items_slot1_temp
+            self.quick_items_slot2_pos = (int(x), int(y))
+            self.config["quick_items_slot1_pos"] = list(self.quick_items_slot1_pos)
+            self.config["quick_items_slot2_pos"] = list(self.quick_items_slot2_pos)
+            save_config(self.config)
+            self.quick_items_pos_var.set(
+                f"S1:{list(self.quick_items_slot1_pos)} S2:{list(self.quick_items_slot2_pos)}"
+            )
+            self.root.after(0, lambda: self.quick_items_pos_btn.config(text="Record Slots"))
+            self.root.after(0, lambda: self.show_overlay("Recorded!", force=True))
+            print(
+                f"[QD-ITEMS] Slots: {self.quick_items_slot1_pos} -> {self.quick_items_slot2_pos}"
+            )
+            if esc_hook_ref[0]:
+                try:
+                    keyboard.unhook(esc_hook_ref[0])
+                except:
+                    pass
+            return False
+
+        listener_ref[0] = mouse.Listener(on_click=on_click) # pyright: ignore[reportCallIssue, reportArgumentType]
+        listener_ref[0].start()
+
+        def on_esc():
+            if listener_ref[0]:
+                listener_ref[0].stop()
+            self.root.after(0, lambda: self.quick_items_pos_btn.config(text="Record Slots"))
+            self.root.after(0, lambda: self.show_overlay("Cancelled", force=True))
+            if esc_hook_ref[0]:
+                try:
+                    keyboard.unhook(esc_hook_ref[0])
+                except:
+                    pass
+
+        esc_hook_ref[0] = keyboard.on_press_key( # pyright: ignore[reportCallIssue] # type: ignore
+            "esc", lambda e: on_esc(), suppress=False
+        )
 
     def start_edrop_pos_recording(self):
         """Record E-Drop positions - right-click on item, then left-click on drop menu"""
@@ -4220,7 +4431,7 @@ class QuickDupeApp:
                 except:
                     pass
 
-        esc_hook_ref[0] = keyboard.on_press_key( # pyright: ignore[reportArgumentType] # pyright: ignore[reportArgumentType] # pyright: ignore[reportCallIssue]
+        esc_hook_ref[0] = keyboard.on_press_key( # pyright: ignore[reportArgumentType] # pyright: ignore[reportArgumentType] # pyright: ignore[reportCallIssue] # type: ignore
             "esc", lambda e: on_esc(), suppress=False
         )
 
@@ -4352,7 +4563,7 @@ class QuickDupeApp:
                         pass
                 return False  # Stop listener
 
-        listener_ref[0] = mouse.Listener(on_click=on_click)
+        listener_ref[0] = mouse.Listener(on_click=on_click) # pyright: ignore[reportCallIssue, reportArgumentType]
         listener_ref[0].start()
 
         # ESC to cancel and stop all macros
@@ -4419,6 +4630,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_dc_both = False
         self.recording_dc_outbound = False
         self.recording_dc_inbound = False
@@ -4441,6 +4653,7 @@ class QuickDupeApp:
             not self.recording_triggernade
             and not self.recording_quickdrop
             and not self.recording_mine
+            and not self.recording_quick_items
             and not self.recording_espam
             and not self.recording_keycard
             and not self.recording_edrop
@@ -4527,6 +4740,10 @@ class QuickDupeApp:
                 self.quickdrop_hotkey_var.set("")
                 self.quickdrop_record_btn.config(text="Set")
                 self.recording_quickdrop = False
+            elif self.recording_quick_items:
+                self.quick_items_hotkey_var.set("")
+                self.quick_items_record_btn.config(text="Set")
+                self.recording_quick_items = False
             elif self.recording_mine:
                 self.mine_hotkey_var.set("")
                 self.mine_record_btn.config(text="Set")
@@ -4602,6 +4819,7 @@ class QuickDupeApp:
             all_hotkey_vars = [
                 self.triggernade_hotkey_var,
                 self.quickdrop_hotkey_var,
+                self.quick_items_hotkey_var,
                 self.mine_hotkey_var,
                 self.espam_hotkey_var,
                 self.keycard_hotkey_var,
@@ -4627,6 +4845,10 @@ class QuickDupeApp:
                 self.quickdrop_hotkey_var.set(hotkey)
                 self.quickdrop_record_btn.config(text="Set")
                 self.recording_quickdrop = False
+            elif self.recording_quick_items:
+                self.quick_items_hotkey_var.set(hotkey)
+                self.quick_items_record_btn.config(text="Set")
+                self.recording_quick_items = False
             elif self.recording_mine:
                 self.mine_hotkey_var.set(hotkey)
                 self.mine_record_btn.config(text="Set")
@@ -4994,6 +5216,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_minimize = False
         self.recording_tray = False
         self.dc_both_record_btn.config(text="...")
@@ -5011,6 +5234,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_minimize = False
         self.recording_tray = False
         self.dc_outbound_record_btn.config(text="...")
@@ -5028,6 +5252,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_minimize = False
         self.recording_tray = False
         self.dc_inbound_record_btn.config(text="...")
@@ -5045,6 +5270,7 @@ class QuickDupeApp:
         self.recording_triggernade = False
         self.recording_espam = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.recording_minimize = False
         self.recording_tray = False
         self.tamper_record_btn.config(text="...")
@@ -5064,6 +5290,7 @@ class QuickDupeApp:
         self.recording_dc_inbound = False
         self.recording_tamper = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.minimize_record_btn.config(text="...")
         self.minimize_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
@@ -5081,6 +5308,7 @@ class QuickDupeApp:
         self.recording_dc_inbound = False
         self.recording_tamper = False
         self.recording_mine = False
+        self.recording_quick_items = False
         self.tray_record_btn.config(text="...")
         self.tray_hotkey_var.set("Press key...")
         self.root.bind("<KeyPress>", self.on_key_press)
@@ -5100,6 +5328,21 @@ class QuickDupeApp:
         self.config["quickdrop_inv_delay"] = self.quickdrop_inv_delay_var.get()
         self.config["quickdrop_menu_delay"] = self.quickdrop_menu_delay_var.get()
         self.config["quickdrop_drop_delay"] = self.quickdrop_drop_delay_var.get()
+        # Quick Dupe Items settings
+        self.config["quick_items_hotkey"] = self.quick_items_hotkey_var.get()
+        self.config["quick_items_slot1_pos"] = list(self.quick_items_slot1_pos)
+        self.config["quick_items_slot2_pos"] = list(self.quick_items_slot2_pos)
+        self.config["quick_items_tab_hold"] = self.quick_items_tab_hold_var.get()
+        self.config["quick_items_inv_delay"] = self.quick_items_inv_delay_var.get()
+        self.config["quick_items_action_delay"] = self.quick_items_action_delay_var.get()
+        self.config["quick_items_alt_delay"] = self.quick_items_alt_delay_var.get()
+        self.config["quick_items_split_hold"] = self.quick_items_split_hold_var.get()
+        self.config["quick_items_drag_hold"] = self.quick_items_drag_hold_var.get()
+        self.config["quick_items_drag_speed"] = self.quick_items_drag_speed_var.get()
+        self.config["quick_items_q_delay"] = self.quick_items_q_delay_var.get()
+        self.config["quick_items_q_select_delay"] = self.quick_items_q_select_delay_var.get()
+        self.config["quick_items_spam_delay"] = self.quick_items_spam_delay_var.get()
+        self.config["quick_items_spam_max_clicks"] = self.quick_items_spam_max_clicks_var.get()
         self.config["espam_hotkey"] = self.espam_hotkey_var.get()
         self.config["wait_before_espam"] = self.wait_before_espam_var.get()
         self.config["espam_duration"] = self.espam_duration_var.get()
@@ -5226,6 +5469,15 @@ class QuickDupeApp:
         if hasattr(self, "quickdrop_pos_var"):
             self.quickdrop_pos_var.set(
                 f"R:{list(self.quickdrop_rclick_pos)} L:{list(self.quickdrop_lclick_pos)}"
+            )
+
+        if config.get("quick_items_slot1_pos") is not None:
+            self.quick_items_slot1_pos = tuple(config["quick_items_slot1_pos"])
+        if config.get("quick_items_slot2_pos") is not None:
+            self.quick_items_slot2_pos = tuple(config["quick_items_slot2_pos"])
+        if hasattr(self, "quick_items_pos_var"):
+            self.quick_items_pos_var.set(
+                f"S1:{list(self.quick_items_slot1_pos)} S2:{list(self.quick_items_slot2_pos)}"
             )
 
         if config.get("keycard_rclick_pos") is not None:
@@ -5406,6 +5658,7 @@ class QuickDupeApp:
         self.dc_inbound_hotkey_var.set("")
         self.tamper_hotkey_var.set("")
         self.mine_hotkey_var.set("")
+        self.quick_items_hotkey_var.set("")
         self.stop_hotkey_var.set("esc")  # Default is esc
         self.minimize_hotkey_var.set("")
         self.tray_hotkey_var.set("")
@@ -5689,6 +5942,7 @@ class QuickDupeApp:
 
         self.triggernade_hotkey_registered = None
         self.quickdrop_hotkey_registered = None
+        self.quick_items_hotkey_registered = None
         self.espam_hotkey_registered = None
         self.escape_hotkey_registered = None
         self.dc_both_hotkey_registered = None
@@ -5734,6 +5988,18 @@ class QuickDupeApp:
                 )
             except Exception as e:
                 print(f"[HOTKEY] FAILED quickdrop '{qd_hk}': {e}")
+
+        qdi_hk = self.quick_items_hotkey_var.get()
+        if qdi_hk and qdi_hk != "Press key...":
+            try:
+                self.quick_items_hotkey_registered = keyboard.add_hotkey(
+                    qdi_hk, self.on_quick_items_hotkey, suppress=False
+                )
+                print(
+                    f"[HOTKEY] Quick Items registered OK: '{qdi_hk}' -> {self.quick_items_hotkey_registered}"
+                )
+            except Exception as e:
+                print(f"[HOTKEY] FAILED quick items '{qdi_hk}': {e}")
 
         if espam_hk and espam_hk != "Press key...":
             try:
@@ -5946,6 +6212,7 @@ class QuickDupeApp:
         print("[HOTKEY] Stop All pressed - stopping all macros!")
         self.triggernade_stop = True
         self.quickdrop_stop = True
+        self.quick_items_stop = True
         self.espam_stop = True
         self.mine_stop = True
         self.edrop_stop = True
@@ -6384,6 +6651,119 @@ class QuickDupeApp:
                 0, lambda: self.quickdrop_status_label.config(foreground="gray")
             )
             self.root.after(0, lambda: self.show_overlay("Quick Drop stopped."))
+
+    def on_quick_items_hotkey(self):
+        """Toggle quick dupe items macro"""
+        if not self._quick_items_lock.acquire(blocking=False):
+            return
+        try:
+            print(
+                f"[HOTKEY] Quick Items hotkey PRESSED! running={self.quick_items_running}"
+            )
+            if self.quick_items_running:
+                print("[HOTKEY] Setting quick_items_stop = True")
+                self.quick_items_stop = True
+                self.root.after(0, lambda: self.quick_items_status_var.set("Stopping..."))
+            else:
+                # Respect cooldown to avoid immediate restarts
+                now = int(time.time() * 1000)
+                cooldown_until = getattr(self, "quick_items_cooldown_until", 0)
+                if now < cooldown_until:
+                    print(f"[HOTKEY] Quick Items in cooldown until {cooldown_until}, ignoring start")
+                    return
+                print("[HOTKEY] Starting quick items macro")
+                self.quick_items_stop = False
+                self.quick_items_running = True
+                self.root.after(0, lambda: self.quick_items_status_var.set("RUNNING"))
+                self.root.after(
+                    0, lambda: self.quick_items_status_label.config(foreground="orange")
+                )
+                self.root.after(0, lambda: self.show_overlay("Quick Items started"))
+                threading.Thread(target=self.run_quick_items_macro, daemon=True).start()
+        finally:
+            self._quick_items_lock.release()
+
+    def run_quick_items_macro(self):
+        """Quick Dupe Items macro sequence (slots 1/2)"""
+        print("[HOTKEY] run_quick_items_macro starting")
+        try:
+            if not self.quick_items_slot1_pos or not self.quick_items_slot2_pos:
+                self.root.after(
+                    0,
+                    lambda: self.show_overlay(
+                        "Record quick slot positions first!", force=True
+                    ),
+                )
+                return
+            if self.quick_items_slot1_pos == (0, 0) or self.quick_items_slot2_pos == (0, 0):
+                self.root.after(
+                    0,
+                    lambda: self.show_overlay(
+                        "Record quick slot positions first!", force=True
+                    ),
+                )
+                return
+
+            timings = {
+                "tab_hold": self.quick_items_tab_hold_var.get(),
+                "inv_delay": self.quick_items_inv_delay_var.get(),
+                "action_delay": self.quick_items_action_delay_var.get(),
+                "alt_delay": self.quick_items_alt_delay_var.get(),
+                "split_hold": self.quick_items_split_hold_var.get(),
+                "drag_hold": self.quick_items_drag_hold_var.get(),
+                "drag_speed": self.quick_items_drag_speed_var.get(),
+                "q_delay": self.quick_items_q_delay_var.get(),
+                "q_select_delay": self.quick_items_q_select_delay_var.get(),
+                "spam_delay": self.quick_items_spam_delay_var.get(),
+                "spam_max_clicks": self.quick_items_spam_max_clicks_var.get(),
+            }
+
+            try:
+                print(f"[QD-ITEMS] timings={timings}")
+                run_quick_dupe_items(
+                    vsleep=self.vsleep,
+                    curved_drag=self.curved_drag,
+                    keyboard=pynput_keyboard,
+                    mouse=pynput_mouse,
+                    slot1_pos=self.quick_items_slot1_pos,
+                    slot2_pos=self.quick_items_slot2_pos,
+                    timings=timings,
+                    stop_check=lambda: self.quick_items_stop,
+                )
+            except Exception as e:
+                print(f"[QD-ITEMS] Exception during macro run: {e}")
+                import traceback
+
+                traceback.print_exc()
+        except Exception as e:
+            # Safety net: log unexpected exceptions
+            print(f"[QD-ITEMS] Unexpected exception: {e}")
+            import traceback
+
+            traceback.print_exc()
+        finally:
+            # Ensure input is released and state reset so macro can be restarted
+            try:
+                pynput_keyboard.release("q")
+                pynput_keyboard.release(Key.alt)
+                pynput_keyboard.release(Key.tab)
+                pynput_mouse.release(MouseButton.left)
+                pynput_mouse.release(MouseButton.right)
+            except Exception:
+                pass
+            self.quick_items_running = False
+            self.quick_items_stop = False
+            # Set short cooldown to prevent immediate re-trigger
+            try:
+                self.quick_items_cooldown_until = int(time.time() * 1000) + 800
+            except Exception:
+                self.quick_items_cooldown_until = 0
+            print("[HOTKEY] run_quick_items_macro finished, flags reset")
+            self.root.after(0, lambda: self.quick_items_status_var.set("Ready"))
+            self.root.after(
+                0, lambda: self.quick_items_status_label.config(foreground="gray")
+            )
+            self.root.after(0, lambda: self.show_overlay("Quick Items stopped."))
 
     def on_mine_hotkey(self):
         """Toggle mine dupe macro"""

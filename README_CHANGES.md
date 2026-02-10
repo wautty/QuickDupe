@@ -9,6 +9,7 @@ Dieses Dokument zeigt **echte Beispiele aus dem Code** mit jeweils einer **Vorhe
 ## 1) Netzwerkfunktionen ausgelagert (`quickdupe.py` → `utils/network.py`)
 
 ### Vorher (in `quickdupe.py`)
+
 ```python
 # Packet drop via WinDivert (lazy loaded to avoid network interference on startup)
 _pydivert = None  # Lazy loaded
@@ -27,6 +28,7 @@ def start_packet_drop(outbound=True, inbound=True):
 ```
 
 ### Nachher (in `quickdupe.py` + neues Modul)
+
 ```python
 from utils.network import (
     start_packet_drop,
@@ -39,6 +41,7 @@ from utils.network import (
 ```
 
 Und die Logik liegt jetzt zentral in `utils/network.py`:
+
 ```python
 def start_packet_drop(outbound=True, inbound=True):
     """DROP PACKETS NOW"""
@@ -55,6 +58,7 @@ def start_packet_drop(outbound=True, inbound=True):
 ## 2) Export All speichert komplette Config + Macros
 
 ### Vorher (nur Triggernade & Mine)
+
 ```python
 if path:
     data = {
@@ -65,6 +69,7 @@ if path:
 ```
 
 ### Nachher (vollständige Config + Custom Macros)
+
 ```python
 if path:
     # Ensure config is up-to-date with current UI values
@@ -83,6 +88,7 @@ if path:
 ## 3) Import All aktualisiert UI‑Zustand
 
 ### Vorher (nur Teil‑Settings)
+
 ```python
 if data.get("type") == "all":
     if "triggernade" in data:
@@ -92,6 +98,7 @@ if data.get("type") == "all":
 ```
 
 ### Nachher (Config + UI‑Sync + Macros)
+
 ```python
 if data.get("type") == "all":
     if "config" in data:
@@ -114,6 +121,7 @@ if data.get("type") == "all":
 ## 4) Fehlende Timing‑Werte werden in `save_settings()` gespeichert
 
 ### Vorher (Auszug – fehlende Keys)
+
 ```python
 self.config["trig_m1_hold"] = self.trig_m1_hold_var.get()
 self.config["trig_m2_hold"] = self.trig_m2_hold_var.get()
@@ -121,6 +129,7 @@ self.config["trig_dc_delay"] = self.trig_dc_delay_var.get()
 ```
 
 ### Nachher (zusätzliche Keys inkl. Drag‑Speed & Interweave)
+
 ```python
 self.config["trig_m1_hold"] = self.trig_m1_hold_var.get()
 self.config["trig_m2_hold"] = self.trig_m2_hold_var.get()
@@ -130,6 +139,7 @@ self.config["trig_m1_before_interweave"] = self.trig_m1_before_interweave_var.ge
 ```
 
 ### Vorher (Mine‑Block ohne zusätzliche Werte)
+
 ```python
 self.config["mine_cook"] = self.mine_cook_var.get()
 self.config["mine_dc_delay"] = self.mine_dc_delay_var.get()
@@ -137,6 +147,7 @@ self.config["mine_click_delay"] = self.mine_click_delay_var.get()
 ```
 
 ### Nachher (Mine‑Block inkl. Drag/Close/Tab‑Zeiten)
+
 ```python
 self.config["mine_cook"] = self.mine_cook_var.get()
 self.config["mine_dc_delay"] = self.mine_dc_delay_var.get()
@@ -148,12 +159,14 @@ self.config["mine_click_delay"] = self.mine_click_delay_var.get()
 ```
 
 ### Vorher (E‑Drop ohne E+DC‑Delay)
+
 ```python
 self.config["edrop_e_press"] = self.edrop_e_press_var.get()
 self.config["edrop_wait_before_inv"] = self.edrop_wait_before_inv_var.get()
 ```
 
 ### Nachher (E+DC‑Delay wird gespeichert)
+
 ```python
 self.config["edrop_e_press"] = self.edrop_e_press_var.get()
 self.config["edrop_e_dc_delay"] = self.edrop_e_dc_delay_var.get()
@@ -165,11 +178,13 @@ self.config["edrop_wait_before_inv"] = self.edrop_wait_before_inv_var.get()
 ## 5) UI‑Sync Helfer nach Import
 
 ### Vorher
+
 ```python
 # (Kein zentraler Sync vorhanden)
 ```
 
 ### Nachher (neue Methode)
+
 ```python
 def _apply_config_to_ui(self):
     """Apply self.config values to UI variables and state"""

@@ -14,7 +14,7 @@ def on_del():
 def on_esc():
     global running, start_time
     if running:
-        elapsed = time.time() - start_time
+        elapsed = time.time() - start_time # pyright: ignore[reportOperatorIssue]
         running = False
         print(f"Elapsed: {elapsed:.3f} seconds")
 
